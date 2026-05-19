@@ -439,6 +439,12 @@ func (m *Manager) Subscribe(sessionID string) (<-chan core.AgentEvent, func(), e
 	m.subs[sessionID][ch] = struct{}{}
 	p.clients++
 	p.lastUse = time.Now()
+	if n := len(m.history[sessionID]); n > 0 {
+		select {
+		case ch <- core.AgentEvent{Event: "history_source", SessionID: sessionID, Content: fmt.Sprintf("Loaded %d events from AgentBridge cache", n)}:
+		default:
+		}
+	}
 	for _, ev := range m.history[sessionID] {
 		select {
 		case ch <- ev:
@@ -594,7 +600,7 @@ func (m *Manager) captureHermesRemoteID(p *sessionRuntime, line []byte) {
 			log.Printf("session %s: hermes resumed persistent session_key=%s", p.ID, resumed)
 		}
 		if messages, ok := msg.Result["messages"].([]any); ok && len(messages) > 0 {
-			m.replaceHistory(p.ID, hermesMessagesToEvents(p.ID, messages))
+			m.replaceHistory(p.ID, hermesMessagesToEvents(p.ID, messages), fmt.Sprintf("Restored %d messages from Hermes native history", len(messages)))
 			log.Printf("session %s: restored %d Hermes history message(s)", p.ID, len(messages))
 		}
 		if needSessionKey {
@@ -768,7 +774,10 @@ func (m *Manager) publish(ev core.AgentEvent) {
 	}
 }
 
-func (m *Manager) replaceHistory(sessionID string, events []core.AgentEvent) {
+func (m *Manager) replaceHistory(sessionID string, events []core.AgentEvent, source string) {
+	if source != "" {
+		events = append([]core.AgentEvent{{Event: "history_source", SessionID: sessionID, Content: source}}, events...)
+	}
 	if len(events) > historyLimit {
 		events = events[len(events)-historyLimit:]
 	}
