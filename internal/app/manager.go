@@ -569,19 +569,61 @@ func (m *Manager) captureHermesRemoteID(p *sessionRuntime, line []byte) {
 	if err := json.Unmarshal(line, &msg); err != nil || msg.Result == nil {
 		return
 	}
+	if key, _ := msg.Result["session_key"].(string); key != "" {
+		p.mu.Lock()
+		changed := p.resumeID != key
+		p.resumeID = key
+		p.mu.Unlock()
+		if changed {
+			log.Printf("session %s: hermes persistent session_key=%s", p.ID, key)
+			m.schedulePersist()
+		}
+	}
 	if sid, _ := msg.Result["session_id"].(string); sid != "" {
+		resumed, _ := msg.Result["resumed"].(string)
 		p.mu.Lock()
 		p.remoteID = sid
+		if resumed != "" {
+			p.resumeID = resumed
+		}
+		needSessionKey := p.resumeID == ""
 		p.State = core.StateIdle
 		p.mu.Unlock()
 		log.Printf("session %s: hermes remote session_id=%s", p.ID, sid)
+		if resumed != "" {
+			log.Printf("session %s: hermes resumed persistent session_key=%s", p.ID, resumed)
+		}
 		if messages, ok := msg.Result["messages"].([]any); ok && len(messages) > 0 {
 			m.replaceHistory(p.ID, hermesMessagesToEvents(p.ID, messages))
 			log.Printf("session %s: restored %d Hermes history message(s)", p.ID, len(messages))
 		}
+		if needSessionKey {
+			m.queryHermesSessionKey(p, sid)
+		}
 		m.setState(p.ID, core.StateIdle)
 		m.publish(core.AgentEvent{Event: "state_change", SessionID: p.ID, State: core.StateIdle})
 	}
+}
+
+func (m *Manager) queryHermesSessionKey(p *sessionRuntime, remoteID string) {
+	p.mu.Lock()
+	stdin := p.stdin
+	p.mu.Unlock()
+	if stdin == nil || remoteID == "" {
+		return
+	}
+	b, err := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      "ab-session-title-" + remoteID,
+		"method":  "session.title",
+		"params":  map[string]any{"session_id": remoteID},
+	})
+	if err != nil {
+		return
+	}
+	b = append(b, '\n')
+	log.Printf("session %s hermes stdin: %.1000s", p.ID, string(b))
+	_, _ = stdin.Write(b)
 }
 
 func (m *Manager) capturePiRemoteID(p *sessionRuntime, line []byte) {
@@ -896,7 +938,7 @@ func (m *Manager) restorePersisted() {
 				break
 			}
 			p.adapter = ad
-			if (sess.Kind == core.AgentHermes || sess.Kind == core.AgentPi) && p.resumeID == "" {
+			if sess.Kind == core.AgentPi && p.resumeID == "" {
 				p.resumeID = ps.RemoteID
 			}
 			if sess.Kind == core.AgentHermes && !isHermesGatewayDir(p.dir) {
