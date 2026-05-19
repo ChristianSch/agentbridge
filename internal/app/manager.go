@@ -24,7 +24,7 @@ import (
 	"github.com/agentbridge/agentbridge/internal/core"
 )
 
-const historyLimit = 500
+const historyLimit = 20000
 
 type Manager struct {
 	cfg      config.Config
@@ -382,6 +382,9 @@ func (m *Manager) Send(c core.ClientCommand) error {
 	if err != nil {
 		return err
 	}
+	if c.Action == "prompt" {
+		m.publish(core.AgentEvent{Event: "user_message", SessionID: p.ID, Content: c.Text})
+	}
 	if p.Kind == core.AgentHermes {
 		b = m.addHermesSessionID(p, b)
 		log.Printf("session %s hermes stdin: %.1000s", p.ID, string(b))
@@ -512,6 +515,9 @@ func (m *Manager) readLoop(p *sessionRuntime, r io.Reader) {
 			continue
 		}
 		ev.SessionID = p.ID
+		if p.Kind == core.AgentHermes && ev.Event == "error" && strings.Contains(strings.ToLower(ev.Content), "session not found") {
+			m.recreateHermesSession(p)
+		}
 		if ev.Event == "state_change" {
 			log.Printf("session %s event state=%s", p.ID, ev.State)
 			p.mu.Lock()
@@ -527,6 +533,30 @@ func (m *Manager) readLoop(p *sessionRuntime, r io.Reader) {
 	if err := s.Err(); err != nil {
 		m.publish(core.AgentEvent{Event: "error", SessionID: p.ID, Content: err.Error()})
 	}
+}
+
+func (m *Manager) recreateHermesSession(p *sessionRuntime) {
+	p.mu.Lock()
+	if p.stdin == nil {
+		p.mu.Unlock()
+		return
+	}
+	p.resumeID = ""
+	p.remoteID = ""
+	stdin := p.stdin
+	p.mu.Unlock()
+	msgs, err := p.adapter.InitialMessages(core.AgentConfig{})
+	if err != nil {
+		m.setState(p.ID, core.StateError)
+		return
+	}
+	log.Printf("session %s: hermes resume failed; creating replacement gateway session", p.ID)
+	m.publish(core.AgentEvent{Event: "error", SessionID: p.ID, Content: "Hermes session was not found; creating a new gateway session."})
+	for _, b := range msgs {
+		log.Printf("session %s hermes stdin: %.1000s", p.ID, string(b))
+		_, _ = stdin.Write(b)
+	}
+	m.schedulePersist()
 }
 
 func (m *Manager) captureHermesRemoteID(p *sessionRuntime, line []byte) {
@@ -656,7 +686,19 @@ func (m *Manager) setState(id string, state core.SessionState) {
 func (m *Manager) publish(ev core.AgentEvent) {
 	m.mu.Lock()
 	if ev.SessionID != "" {
-		h := append(m.history[ev.SessionID], ev)
+		h := m.history[ev.SessionID]
+		if shouldCoalesceHistory(ev) && len(h) > 0 {
+			last := &h[len(h)-1]
+			if last.Event == ev.Event && last.Tool == ev.Tool {
+				last.Content += ev.Content
+				last.Output += ev.Output
+				last.Raw = ev.Raw
+			} else {
+				h = append(h, ev)
+			}
+		} else {
+			h = append(h, ev)
+		}
 		if len(h) > historyLimit {
 			h = h[len(h)-historyLimit:]
 		}
@@ -678,6 +720,10 @@ func (m *Manager) publish(ev core.AgentEvent) {
 	if subCount == 0 && m.shouldNotify(ev) {
 		go m.notify(ev)
 	}
+}
+
+func shouldCoalesceHistory(ev core.AgentEvent) bool {
+	return ev.Event == "delta" || ev.Event == "thinking_delta" || ev.Event == "tool_delta"
 }
 
 func (m *Manager) reaper() {
