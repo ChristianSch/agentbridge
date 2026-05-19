@@ -206,16 +206,31 @@ func (s *Server) sessions(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) sessionByID(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/api/sessions/")
-	if r.Method != http.MethodDelete {
+	switch r.Method {
+	case http.MethodPatch:
+		var req struct {
+			Name string `json:"name"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		sess, err := s.store.Rename(id, req.Name)
+		if err != nil {
+			http.Error(w, err.Error(), 404)
+			return
+		}
+		writeJSON(w, sess)
+	case http.MethodDelete:
+		log.Printf("delete session id=%s", id)
+		if err := s.store.Kill(id); err != nil {
+			http.Error(w, err.Error(), 404)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
 		http.Error(w, "method not allowed", 405)
-		return
 	}
-	log.Printf("delete session id=%s", id)
-	if err := s.store.Kill(id); err != nil {
-		http.Error(w, err.Error(), 404)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) ws(w http.ResponseWriter, r *http.Request) {

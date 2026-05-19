@@ -73,12 +73,21 @@ function App() {
   }
 
   function send(action, text = '', extra = {}, sessionId = active) { if (!sessionId || !ws.current) return; ws.current.send(JSON.stringify({ action, session_id: sessionId, text, ...extra })) }
+  async function renameSession(id, name) { const s = await api(`/api/sessions/${encodeURIComponent(id)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) }); setSessions(list => list.map(x => x.id === id ? s : x)) }
+  async function deleteSession(id) { await api(`/api/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' }); setSessions(list => list.filter(s => s.id !== id)); setMessages(prev => { const next = { ...prev }; delete next[id]; return next }); setActive(cur => cur === id ? null : cur) }
 
   return <div class="app">
-    <aside class="sidebar"><div class="brand">AgentBridge <small>{socketState}</small></div><div class="create"><button class="new-session" onClick={() => setFlowKind('pi')}>＋ New session</button></div>{detectInfo && !detectInfo.hermes_profiles?.length && <div class="notice">Hermes not detected</div>}<div class="sessions">{sessions.map(s => <button class={`session ${s.id === active ? 'active' : ''}`} onClick={() => selectSession(s.id)}><span>{s.name}</span><small>{s.kind} · {s.state}</small></button>)}</div></aside>
+    <aside class="sidebar"><div class="brand">AgentBridge <small>{socketState}</small></div><div class="create"><button class="new-session" onClick={() => setFlowKind('pi')}>＋ New session</button></div>{detectInfo && !detectInfo.hermes_profiles?.length && <div class="notice">Hermes not detected</div>}<div class="sessions">{sessions.map(s => <SessionItem session={s} active={s.id === active} onSelect={() => selectSession(s.id)} onRename={renameSession} onDelete={deleteSession} />)}</div></aside>
     <main class="pane">{!activeSession && <Empty onNew={setFlowKind} />}{activeSession?.kind === 'terminal' && <TerminalPane sessionId={activeSession.id} />}{activeSession && activeSession.kind !== 'terminal' && <AgentChat session={activeSession} messages={messages[active] || []} onSend={(action, text, extra) => send(action, text, extra, activeSession.id)} />}</main>
     {flowKind && <NewSessionFlow initialKind={flowKind} hermesAvailable={!!detectInfo?.hermes_profiles?.length} onCancel={() => setFlowKind(null)} onCreate={create} />}
   </div>
+}
+
+function SessionItem({ session, active, onSelect, onRename, onDelete }) {
+  const [menu, setMenu] = useState(false)
+  async function rename() { const name = prompt('Rename session', session.name); if (name && name.trim() && name !== session.name) await onRename(session.id, name.trim()) }
+  async function remove() { if (confirm(`Delete ${session.name}? This stops the process and removes it from AgentBridge.`)) await onDelete(session.id) }
+  return <div class={`session-wrap ${active ? 'active' : ''}`}><button class="session" onClick={onSelect}><span>{session.name}</span><small>{session.kind} · {session.state}</small></button><button class="session-menu-button" title="Session actions" onClick={() => setMenu(v => !v)}>⋯</button>{menu && <div class="session-menu"><button onClick={() => { setMenu(false); rename() }}>Rename</button><button onClick={() => { setMenu(false); remove() }}>Delete</button></div>}</div>
 }
 
 function Empty({ onNew }) { return <div class="empty"><h1>No session selected</h1><p>Start with the defaults, tune paths only if you need to.</p><button onClick={() => onNew('pi')}>New session</button></div> }

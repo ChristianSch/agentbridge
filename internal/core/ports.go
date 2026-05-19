@@ -43,6 +43,7 @@ type SessionStore interface {
 	CreateTerminal(ctx context.Context, name, cwd, shell string) (*Session, error)
 	List() []Session
 	Get(id string) (Session, bool)
+	Rename(id, name string) (Session, error)
 	Kill(id string) error
 	Send(cmd ClientCommand) error
 	Subscribe(sessionID string) (<-chan AgentEvent, func(), error)

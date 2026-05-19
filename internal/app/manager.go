@@ -317,6 +317,26 @@ func (m *Manager) Get(id string) (core.Session, bool) {
 	return p.Session, true
 }
 
+func (m *Manager) Rename(id, name string) (core.Session, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return core.Session{}, errors.New("name is required")
+	}
+	m.mu.Lock()
+	p, ok := m.sessions[id]
+	if !ok {
+		m.mu.Unlock()
+		return core.Session{}, errors.New("session not found")
+	}
+	p.Name = name
+	p.lastUse = time.Now()
+	sess := p.Session
+	m.mu.Unlock()
+	m.schedulePersist()
+	m.publish(core.AgentEvent{Event: "session_renamed", SessionID: id, Content: name})
+	return sess, nil
+}
+
 func (m *Manager) Kill(id string) error {
 	m.mu.Lock()
 	p, ok := m.sessions[id]
