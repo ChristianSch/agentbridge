@@ -20,8 +20,8 @@ import (
 
 	"github.com/creack/pty"
 
-	"github.com/agentbridge/agentbridge/internal/config"
-	"github.com/agentbridge/agentbridge/internal/core"
+	"github.com/ChristianSch/agentbridge/internal/config"
+	"github.com/ChristianSch/agentbridge/internal/core"
 )
 
 const historyLimit = 20000

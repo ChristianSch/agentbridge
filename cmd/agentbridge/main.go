@@ -4,11 +4,11 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/agentbridge/agentbridge/internal/adapters/agent"
-	httpadapter "github.com/agentbridge/agentbridge/internal/adapters/http"
-	"github.com/agentbridge/agentbridge/internal/app"
-	"github.com/agentbridge/agentbridge/internal/config"
-	"github.com/agentbridge/agentbridge/internal/static"
+	"github.com/ChristianSch/agentbridge/internal/adapters/agent"
+	httpadapter "github.com/ChristianSch/agentbridge/internal/adapters/http"
+	"github.com/ChristianSch/agentbridge/internal/app"
+	"github.com/ChristianSch/agentbridge/internal/config"
+	"github.com/ChristianSch/agentbridge/internal/static"
 )
 
 func main() {

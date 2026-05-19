@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"sync/atomic"
 
-	"github.com/agentbridge/agentbridge/internal/core"
+	"github.com/ChristianSch/agentbridge/internal/core"
 )
 
 type HermesAdapter struct{ seq atomic.Uint64 }

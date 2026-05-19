@@ -14,8 +14,8 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/agentbridge/agentbridge/internal/config"
-	"github.com/agentbridge/agentbridge/internal/core"
+	"github.com/ChristianSch/agentbridge/internal/config"
+	"github.com/ChristianSch/agentbridge/internal/core"
 )
 
 type Server struct {
