@@ -2,6 +2,8 @@
 
 Unified remote UI for Pi, Hermes, and terminal sessions.
 
+![AgentBridge screenshot](screenshot.png)
+
 ## Architecture
 
 Ports and adapters layout:
