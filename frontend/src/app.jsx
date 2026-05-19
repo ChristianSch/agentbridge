@@ -102,6 +102,7 @@ function NewSessionFlow({ kind, onCancel, onCreate }) {
 
 function AgentChat({ session, messages, onSend }) {
   const [text, setText] = useState(''), bottom = useRef(null)
+  useEffect(() => setText(''), [session.id])
   useEffect(() => bottom.current?.scrollIntoView({ block: 'end' }), [messages.length])
   const canSend = session.state !== 'starting' && session.state !== 'error' && session.state !== 'exited'
   return <><header class="top"><strong>{session.name}</strong><span>{session.kind} · {session.state} · {session.id}</span></header><section class="messages">{messages.map((m, i) => <Message key={i} msg={m} onSend={onSend} />)}<div ref={bottom} /></section><form class="composer" onSubmit={e => { e.preventDefault(); if (!text.trim() || !canSend) return; onSend('prompt', text); setText('') }}><input value={text} onInput={e => setText(e.currentTarget.value)} placeholder={`Message ${session.kind}: ${session.name}`} /><button disabled={!canSend}>Send</button><button type="button" disabled={!canSend} onClick={() => onSend('steer', text)}>Steer</button><button type="button" onClick={() => onSend('abort')}>Abort</button><button type="button" disabled={!canSend} onClick={() => onSend('compact')}>Compact</button></form></>
