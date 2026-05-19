@@ -100,16 +100,27 @@ function NewSessionFlow({ kind, onCancel, onCreate }) {
   </form></div>
 }
 
+const bridgeCommands = [
+  { name: '/abort', hint: 'Stop the current turn', action: 'abort' },
+  { name: '/compact', hint: 'Ask the agent to compress context', action: 'compact' },
+  { name: '/steer', hint: 'Add guidance while a turn is running', action: 'steer', takesText: true },
+  { name: '/follow-up', hint: 'Queue a follow-up prompt', action: 'follow_up', takesText: true },
+]
+
 function AgentChat({ session, messages, onSend }) {
-  const [text, setText] = useState(''), [visibleCount, setVisibleCount] = useState(300), bottom = useRef(null)
-  useEffect(() => { setText(''); setVisibleCount(300) }, [session.id])
+  const [text, setText] = useState(''), [visibleCount, setVisibleCount] = useState(300), [showCommands, setShowCommands] = useState(false), bottom = useRef(null)
+  useEffect(() => { setText(''); setVisibleCount(300); setShowCommands(false) }, [session.id])
   useEffect(() => bottom.current?.scrollIntoView({ block: 'end' }), [messages.length])
   const canSend = session.state !== 'starting' && session.state !== 'error' && session.state !== 'exited'
   const grouped = groupMessages(messages)
   const hidden = Math.max(0, grouped.length - visibleCount)
   const visible = hidden ? grouped.slice(hidden) : grouped
-  return <><header class="top"><strong>{session.name}</strong><span>{session.kind} · {session.state} · {session.id}</span></header><section class="messages">{hidden > 0 && <button class="older" onClick={() => setVisibleCount(n => n + 250)}>Show {Math.min(250, hidden)} older items ({hidden} hidden)</button>}{visible.map((m, i) => <Message key={`${hidden}-${i}`} msg={m} onSend={onSend} />)}<div ref={bottom} /></section><form class="composer" onSubmit={e => { e.preventDefault(); if (!text.trim() || !canSend) return; onSend('prompt', text); setText('') }}><input value={text} onInput={e => setText(e.currentTarget.value)} placeholder={`Message ${session.kind}: ${session.name}`} /><button disabled={!canSend}>Send</button><button type="button" disabled={!canSend} onClick={() => onSend('steer', text)}>Steer</button><button type="button" onClick={() => onSend('abort')}>Abort</button><button type="button" disabled={!canSend} onClick={() => onSend('compact')}>Compact</button></form></>
+  const slashOpen = showCommands || text.startsWith('/')
+  function submit(e) { e.preventDefault(); if (!text.trim() || !canSend) return; const cmd = parseBridgeCommand(text); if (cmd) onSend(cmd.action, cmd.text); else onSend('prompt', text); setText(''); setShowCommands(false) }
+  return <><header class="top"><div><strong>{session.name}</strong><span>{session.kind} · {session.state}</span></div><code>{session.id}</code></header><section class="messages">{hidden > 0 && <button class="older" onClick={() => setVisibleCount(n => n + 250)}>Show {Math.min(250, hidden)} older items ({hidden} hidden)</button>}{visible.map((m, i) => <Message key={`${hidden}-${i}`} msg={m} onSend={onSend} />)}<div ref={bottom} /></section><form class="composer" onSubmit={submit}>{slashOpen && <CommandMenu text={text} onPick={cmd => { setText(cmd.takesText ? `${cmd.name} ` : cmd.name); setShowCommands(false) }} />}<button class="command-trigger" type="button" title="Commands" onClick={() => setShowCommands(v => !v)}>/</button><input value={text} onInput={e => setText(e.currentTarget.value)} placeholder={`Message ${session.kind}. Type / for commands.`} /><button class="send" disabled={!canSend}>Send</button></form></>
 }
+function CommandMenu({ text, onPick }) { const q = text.startsWith('/') ? text.split(/\s+/)[0].toLowerCase() : ''; const items = bridgeCommands.filter(c => !q || c.name.startsWith(q)); return <div class="command-menu"><div class="command-help">Bridge commands. Unknown slash commands are sent through to the agent.</div>{items.map(cmd => <button type="button" onClick={() => onPick(cmd)}><span>{cmd.name}</span><small>{cmd.hint}</small></button>)}</div> }
+function parseBridgeCommand(text) { const trimmed = text.trim(); const [name, ...rest] = trimmed.split(/\s+/); const cmd = bridgeCommands.find(c => c.name === name.toLowerCase()); if (!cmd) return null; return { action: cmd.action, text: cmd.takesText ? rest.join(' ') : '' } }
 function Message({ msg, onSend }) { if (msg.type === 'activity') return <ActivityGroup msg={msg} />; if (msg.type === 'history') return <div class="msg history">{msg.text}</div>; if (msg.type === 'thinking') return <details class="msg thinking"><summary>Thinking</summary><pre>{msg.text}</pre></details>; if (msg.type === 'tool') return <details class="msg tool"><summary>{msg.title}</summary><pre>{msg.text}</pre></details>; if (msg.type === 'approval') return <div class="msg approval"><strong>Approval needed</strong><p>{msg.text}</p><div class="approval-actions"><button onClick={() => onSend('approve', '', { request_id: msg.requestId, approved: true })}>Allow</button><button onClick={() => onSend('approve', '', { request_id: msg.requestId, approved: false })}>Deny</button></div></div>; if (msg.type === 'assistant') return <div class="msg assistant markdown" dangerouslySetInnerHTML={{ __html: renderMarkdown(msg.text) }} />; return <div class={`msg ${msg.type}`}>{msg.text}</div> }
 function ActivityGroup({ msg }) { const thoughts = msg.items.filter(i => i.type === 'thinking').length, tools = msg.items.filter(i => i.type === 'tool').length; return <details class="msg activity"><summary>Activity{thoughts ? ` · ${thoughts} thinking` : ''}{tools ? ` · ${tools} tool${tools === 1 ? '' : 's'}` : ''}</summary>{msg.items.map((item, i) => <div class={`activity-item ${item.type}`} key={i}><strong>{item.type === 'tool' ? item.title : 'Thinking'}</strong><pre>{item.text}</pre></div>)}</details> }
 function groupMessages(messages) { const out = []; for (const msg of messages) { if (msg.type === 'thinking' || msg.type === 'tool') { const last = out[out.length - 1]; if (last?.type === 'activity') last.items.push(msg); else out.push({ type: 'activity', items: [msg] }); } else out.push(msg); } return out }
