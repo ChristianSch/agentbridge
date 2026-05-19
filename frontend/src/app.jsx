@@ -75,28 +75,29 @@ function App() {
   function send(action, text = '', extra = {}, sessionId = active) { if (!sessionId || !ws.current) return; ws.current.send(JSON.stringify({ action, session_id: sessionId, text, ...extra })) }
 
   return <div class="app">
-    <aside class="sidebar"><div class="brand">AgentBridge <small>{socketState}</small></div><div class="create"><button onClick={() => setFlowKind('pi')}>Pi</button><button disabled={!detectInfo?.hermes_profiles?.length} title={detectInfo?.hermes_profiles?.length ? 'New Hermes session' : 'Hermes not detected'} onClick={() => setFlowKind('hermes')}>Hermes</button><button onClick={() => setFlowKind('terminal')}>Term</button></div>{detectInfo && !detectInfo.hermes_profiles?.length && <div class="notice">Hermes not detected</div>}<div class="sessions">{sessions.map(s => <button class={`session ${s.id === active ? 'active' : ''}`} onClick={() => selectSession(s.id)}><span>{s.name}</span><small>{s.kind} · {s.state}</small></button>)}</div></aside>
+    <aside class="sidebar"><div class="brand">AgentBridge <small>{socketState}</small></div><div class="create"><button class="new-session" onClick={() => setFlowKind('pi')}>＋ New session</button></div>{detectInfo && !detectInfo.hermes_profiles?.length && <div class="notice">Hermes not detected</div>}<div class="sessions">{sessions.map(s => <button class={`session ${s.id === active ? 'active' : ''}`} onClick={() => selectSession(s.id)}><span>{s.name}</span><small>{s.kind} · {s.state}</small></button>)}</div></aside>
     <main class="pane">{!activeSession && <Empty onNew={setFlowKind} />}{activeSession?.kind === 'terminal' && <TerminalPane sessionId={activeSession.id} />}{activeSession && activeSession.kind !== 'terminal' && <AgentChat session={activeSession} messages={messages[active] || []} onSend={(action, text, extra) => send(action, text, extra, activeSession.id)} />}</main>
-    {flowKind && <NewSessionFlow kind={flowKind} onCancel={() => setFlowKind(null)} onCreate={create} />}
+    {flowKind && <NewSessionFlow initialKind={flowKind} hermesAvailable={!!detectInfo?.hermes_profiles?.length} onCancel={() => setFlowKind(null)} onCreate={create} />}
   </div>
 }
 
-function Empty({ onNew }) { return <div class="empty"><h1>Start a session</h1><p>Create a Pi, Hermes, or terminal session.</p><button onClick={() => onNew('pi')}>New Pi session</button></div> }
+function Empty({ onNew }) { return <div class="empty"><h1>No session selected</h1><p>Start with the defaults, tune paths only if you need to.</p><button onClick={() => onNew('pi')}>New session</button></div> }
 
-function NewSessionFlow({ kind, onCancel, onCreate }) {
-  const [info, setInfo] = useState(null), [browse, setBrowse] = useState(null), [cwd, setCwd] = useState(''), [name, setName] = useState(kind), [resumeID, setResumeID] = useState(''), [error, setError] = useState('')
-  useEffect(() => { api('/api/detect').then(d => { setInfo(d); if (kind === 'hermes' && !d.hermes_profiles?.length) setError('No Hermes repo detected. Browse to the repo root containing tui_gateway/entry.py.'); const initial = kind === 'hermes' ? (d.hermes_profiles?.[0]?.path || d.cwd || d.home) : (d.projects?.find(p => p.agent === kind)?.path || d.cwd || d.home); setCwd(initial); setName(kind === 'terminal' ? 'shell' : (initial?.split('/').filter(Boolean).pop() || kind)); return api('/api/browse?path=' + encodeURIComponent(initial)) }).then(setBrowse).catch(e => setError(String(e))) }, [kind])
+function NewSessionFlow({ initialKind, hermesAvailable, onCancel, onCreate }) {
+  const [kind, setKind] = useState(initialKind || 'pi'), [info, setInfo] = useState(null), [browse, setBrowse] = useState(null), [cwd, setCwd] = useState(''), [name, setName] = useState(''), [resumeID, setResumeID] = useState(''), [error, setError] = useState(''), [advanced, setAdvanced] = useState(false)
+  useEffect(() => { api('/api/detect').then(d => { setInfo(d); pickDefaults(kind, d) }).catch(e => setError(String(e))) }, [])
+  useEffect(() => { if (info) pickDefaults(kind, info) }, [kind])
   useEffect(() => { const onKey = e => { if (e.key === 'Escape') onCancel() }; window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey) }, [])
+  function pickDefaults(k, d) { if (k === 'hermes' && !d.hermes_profiles?.length) setError('Hermes not detected. Pick Pi or browse to a Hermes repo in advanced options.'); else setError(''); const initial = k === 'hermes' ? (d.hermes_profiles?.[0]?.path || d.cwd || d.home) : (d.projects?.find(p => p.agent === k)?.path || d.cwd || d.home); setCwd(initial); setName(k === 'terminal' ? 'shell' : (initial?.split('/').filter(Boolean).pop() || k)); api('/api/browse?path=' + encodeURIComponent(initial)).then(setBrowse).catch(() => {}) }
   async function open(path) { try { setError(''); const b = await api('/api/browse?path=' + encodeURIComponent(path || cwd || '/')); setBrowse(b); setCwd(b.path); if (!name || name === kind || name === 'shell') setName(b.path.split('/').filter(Boolean).pop() || kind) } catch (e) { setError(String(e)) } }
   async function submit(e) { e.preventDefault(); setError(''); try { await onCreate({ kind, cwd, name, resume_id: resumeID }) } catch (err) { setError(String(err).trim()) } }
   return <div class="modal-backdrop" onClick={onCancel}><form class="modal" onClick={e => e.stopPropagation()} onSubmit={submit}>
-    <header><strong>New {kind} session</strong><button type="button" onClick={onCancel}>Cancel</button></header>
+    <header><div><strong>New session</strong><small>Choose an agent and get moving.</small></div><button type="button" class="ghost" onClick={onCancel}>Esc</button></header>
     {error && <div class="error">{error}</div>}
-    <label>Name<input value={name} onInput={e => setName(e.currentTarget.value)} /></label>
-    <label>Directory<input value={cwd} onInput={e => setCwd(e.currentTarget.value)} /></label>
-    {kind === 'hermes' && <><div class="chips">{(info?.hermes_profiles || []).map(p => <button type="button" onClick={() => open(p.path)}>{p.name}</button>)}</div><label>Resume session id (optional)<input value={resumeID} onInput={e => setResumeID(e.currentTarget.value)} /></label></>}
-    <div class="current-path">{browse?.path || cwd}</div><div class="browser"><button type="button" title="Parent directory" onClick={() => open(browse?.parent || cwd)}>Parent</button>{(browse?.dirs || []).map(d => <button type="button" title={d.path} onClick={() => open(d.path)}>{d.name}</button>)}</div>
-    <footer><button type="button" onClick={onCancel}>Cancel</button><button>Create</button></footer>
+    <div class="kind-picker"><button type="button" class={kind === 'pi' ? 'selected' : ''} onClick={() => setKind('pi')}>Pi<small>coding agent</small></button><button type="button" disabled={!hermesAvailable} class={kind === 'hermes' ? 'selected' : ''} onClick={() => setKind('hermes')}>Hermes<small>{hermesAvailable ? 'local gateway' : 'not detected'}</small></button><button type="button" class={kind === 'terminal' ? 'selected' : ''} onClick={() => setKind('terminal')}>Term<small>shell</small></button></div>
+    <div class="quick-fields"><label>Name<input value={name} onInput={e => setName(e.currentTarget.value)} /></label><label>Directory<input value={cwd} onInput={e => setCwd(e.currentTarget.value)} /></label></div>
+    <details class="advanced" open={advanced} onToggle={e => setAdvanced(e.currentTarget.open)}><summary>Advanced options</summary>{kind === 'hermes' && <><div class="chips">{(info?.hermes_profiles || []).map(p => <button type="button" onClick={() => open(p.path)}>{p.name}</button>)}</div><label>Resume session key<input value={resumeID} onInput={e => setResumeID(e.currentTarget.value)} placeholder="optional" /></label></>}<div class="current-path">{browse?.path || cwd}</div><div class="browser"><button type="button" title="Parent directory" onClick={() => open(browse?.parent || cwd)}>../</button>{(browse?.dirs || []).map(d => <button type="button" title={d.path} onClick={() => open(d.path)}>{d.name}</button>)}</div></details>
+    <footer><button type="button" class="ghost" onClick={onCancel}>Cancel</button><button class="primary">Create {kind}</button></footer>
   </form></div>
 }
 
