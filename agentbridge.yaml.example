@@ -1,0 +1,30 @@
+bind: "127.0.0.1:7777"
+token: "change-me"
+
+pi:
+  binary: "pi"
+  idle_timeout: "30m"
+
+hermes:
+  venv: "" # auto-detects venv/.venv in the Hermes repo when present
+  gateway_module: "tui_gateway.entry"
+  cwd: "" # auto-detects ~/.hermes/hermes-agent when present
+  idle_timeout: "30m"
+
+terminal:
+  shell: "/bin/bash"
+  idle_timeout: "60m"
+  max_sessions: 10
+
+notifications:
+  backend: "" # "ntfy" to enable
+  ntfy_topic: "agentbridge"
+  ntfy_server: "https://ntfy.sh"
+  notify_on:
+    - "waiting_for_input"
+    - "approval_request"
+
+projects:
+  - name: "webapp"
+    path: "/home/user/projects/webapp"
+    agent: "pi"

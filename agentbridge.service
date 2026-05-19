@@ -1,0 +1,15 @@
+[Unit]
+Description=AgentBridge
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=user
+Environment=AGENTBRIDGE_TOKEN=change-me
+ExecStart=/usr/local/bin/agentbridge --config /home/user/.config/agentbridge/config.yaml
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

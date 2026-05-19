@@ -1,0 +1,114 @@
+import { Fragment, h, render } from 'preact'
+import { useEffect, useRef, useState } from 'preact/hooks'
+import { Terminal } from 'xterm'
+import { FitAddon } from 'xterm-addon-fit'
+import snarkdown from 'snarkdown'
+import 'xterm/css/xterm.css'
+import './style.css'
+
+const token = new URLSearchParams(location.search).get('token') || localStorage.agentbridgeToken || ''
+if (token) localStorage.agentbridgeToken = token
+
+function authHeaders(extra = {}) { return { ...extra, ...(token ? { Authorization: `Bearer ${token}` } : {}) } }
+async function api(path, opts = {}) { const res = await fetch(path, { ...opts, headers: authHeaders(opts.headers) }); if (!res.ok) throw new Error(await res.text()); return res.status === 204 ? null : res.json() }
+
+function App() {
+  const [sessions, setSessions] = useState([])
+  const [active, setActive] = useState(null)
+  const [messages, setMessages] = useState({})
+  const [flowKind, setFlowKind] = useState(null)
+  const [socketState, setSocketState] = useState('connecting')
+  const [detectInfo, setDetectInfo] = useState(null)
+  const ws = useRef(null)
+  const subscribed = useRef(new Set())
+  const activeSession = sessions.find(s => s.id === active)
+  function selectSession(id) { if (id) localStorage.agentbridgeActiveSession = id; setActive(id) }
+
+  async function refresh() {
+    const list = await api('/api/sessions')
+    setSessions(list)
+    setActive(cur => cur || (list.find(s => s.id === localStorage.agentbridgeActiveSession)?.id) || list[0]?.id || null)
+  }
+
+  function subscribe(id) {
+    if (!id || subscribed.current.has(id) || ws.current?.readyState !== WebSocket.OPEN) return
+    ws.current.send(JSON.stringify({ subscribe: id }))
+    subscribed.current.add(id)
+  }
+
+  function addMessage(sessionId, msg) {
+    setMessages(prev => {
+      const list = prev[sessionId] || []
+      if (msg.type === 'assistant_delta' || msg.type === 'thinking_delta') {
+        const targetType = msg.type === 'assistant_delta' ? 'assistant' : 'thinking'
+        const last = list[list.length - 1]
+        if (last?.type === targetType) return { ...prev, [sessionId]: [...list.slice(0, -1), { ...last, text: last.text + msg.text }] }
+        return { ...prev, [sessionId]: [...list, { type: targetType, text: msg.text }] }
+      }
+      if (msg.type === 'tool_delta') {
+        const last = list[list.length - 1]
+        if (last?.type === 'tool' && last.title === msg.title) return { ...prev, [sessionId]: [...list.slice(0, -1), { ...last, text: msg.text || last.text }] }
+        return { ...prev, [sessionId]: [...list, { type: 'tool', title: msg.title, text: msg.text }] }
+      }
+      return { ...prev, [sessionId]: [...list, msg] }
+    })
+  }
+
+  useEffect(() => { refresh().catch(console.error); api('/api/detect').then(setDetectInfo).catch(console.error) }, [])
+  useEffect(() => {
+    const url = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws${token ? `?token=${encodeURIComponent(token)}` : ''}`
+    const sock = new WebSocket(url)
+    ws.current = sock
+    sock.onopen = () => { setSocketState('connected'); setSessions(list => { list.forEach(s => subscribe(s.id)); return list }) }
+    sock.onerror = () => setSocketState('error')
+    sock.onclose = () => setSocketState('closed')
+    sock.onmessage = e => { const ev = JSON.parse(e.data); if (!ev.session_id) { if (ev.event === 'error') addMessage(active || sessions[0]?.id, { type: 'system', text: ev.content || 'WebSocket error' }); return } const msg = normalizeEvent(ev); if (msg) addMessage(ev.session_id, msg); if (ev.event === 'state_change') setSessions(list => list.map(s => s.id === ev.session_id ? { ...s, state: ev.state } : s)) }
+    return () => sock.close()
+  }, [])
+  useEffect(() => { sessions.forEach(s => subscribe(s.id)) }, [sessions.length])
+
+  async function create(req) {
+    const s = await api('/api/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(req) })
+    setSessions(prev => [...prev, s]); selectSession(s.id); setFlowKind(null); setTimeout(() => subscribe(s.id), 0)
+  }
+
+  function send(action, text = '', extra = {}, sessionId = active) { if (!sessionId || !ws.current) return; ws.current.send(JSON.stringify({ action, session_id: sessionId, text, ...extra })); if (action === 'prompt') addMessage(sessionId, { type: 'user', text }) }
+
+  return <div class="app">
+    <aside class="sidebar"><div class="brand">AgentBridge <small>{socketState}</small></div><div class="create"><button onClick={() => setFlowKind('pi')}>Pi</button><button disabled={!detectInfo?.hermes_profiles?.length} title={detectInfo?.hermes_profiles?.length ? 'New Hermes session' : 'Hermes not detected'} onClick={() => setFlowKind('hermes')}>Hermes</button><button onClick={() => setFlowKind('terminal')}>Term</button></div>{detectInfo && !detectInfo.hermes_profiles?.length && <div class="notice">Hermes not detected</div>}<div class="sessions">{sessions.map(s => <button class={`session ${s.id === active ? 'active' : ''}`} onClick={() => selectSession(s.id)}><span>{s.name}</span><small>{s.kind} · {s.state}</small></button>)}</div></aside>
+    <main class="pane">{!activeSession && <Empty onNew={setFlowKind} />}{activeSession?.kind === 'terminal' && <TerminalPane sessionId={activeSession.id} />}{activeSession && activeSession.kind !== 'terminal' && <AgentChat session={activeSession} messages={messages[active] || []} onSend={(action, text, extra) => send(action, text, extra, activeSession.id)} />}</main>
+    {flowKind && <NewSessionFlow kind={flowKind} onCancel={() => setFlowKind(null)} onCreate={create} />}
+  </div>
+}
+
+function Empty({ onNew }) { return <div class="empty"><h1>Start a session</h1><p>Create a Pi, Hermes, or terminal session.</p><button onClick={() => onNew('pi')}>New Pi session</button></div> }
+
+function NewSessionFlow({ kind, onCancel, onCreate }) {
+  const [info, setInfo] = useState(null), [browse, setBrowse] = useState(null), [cwd, setCwd] = useState(''), [name, setName] = useState(kind), [resumeID, setResumeID] = useState(''), [error, setError] = useState('')
+  useEffect(() => { api('/api/detect').then(d => { setInfo(d); if (kind === 'hermes' && !d.hermes_profiles?.length) setError('No Hermes repo detected. Browse to the repo root containing tui_gateway/entry.py.'); const initial = kind === 'hermes' ? (d.hermes_profiles?.[0]?.path || d.cwd || d.home) : (d.projects?.find(p => p.agent === kind)?.path || d.cwd || d.home); setCwd(initial); setName(kind === 'terminal' ? 'shell' : (initial?.split('/').filter(Boolean).pop() || kind)); return api('/api/browse?path=' + encodeURIComponent(initial)) }).then(setBrowse).catch(e => setError(String(e))) }, [kind])
+  useEffect(() => { const onKey = e => { if (e.key === 'Escape') onCancel() }; window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey) }, [])
+  async function open(path) { try { setError(''); const b = await api('/api/browse?path=' + encodeURIComponent(path || cwd || '/')); setBrowse(b); setCwd(b.path); if (!name || name === kind || name === 'shell') setName(b.path.split('/').filter(Boolean).pop() || kind) } catch (e) { setError(String(e)) } }
+  async function submit(e) { e.preventDefault(); setError(''); try { await onCreate({ kind, cwd, name, resume_id: resumeID }) } catch (err) { setError(String(err).trim()) } }
+  return <div class="modal-backdrop" onClick={onCancel}><form class="modal" onClick={e => e.stopPropagation()} onSubmit={submit}>
+    <header><strong>New {kind} session</strong><button type="button" onClick={onCancel}>Cancel</button></header>
+    {error && <div class="error">{error}</div>}
+    <label>Name<input value={name} onInput={e => setName(e.currentTarget.value)} /></label>
+    <label>Directory<input value={cwd} onInput={e => setCwd(e.currentTarget.value)} /></label>
+    {kind === 'hermes' && <><div class="chips">{(info?.hermes_profiles || []).map(p => <button type="button" onClick={() => open(p.path)}>{p.name}</button>)}</div><label>Resume session id (optional)<input value={resumeID} onInput={e => setResumeID(e.currentTarget.value)} /></label></>}
+    <div class="current-path">{browse?.path || cwd}</div><div class="browser"><button type="button" title="Parent directory" onClick={() => open(browse?.parent || cwd)}>Parent</button>{(browse?.dirs || []).map(d => <button type="button" title={d.path} onClick={() => open(d.path)}>{d.name}</button>)}</div>
+    <footer><button type="button" onClick={onCancel}>Cancel</button><button>Create</button></footer>
+  </form></div>
+}
+
+function AgentChat({ session, messages, onSend }) {
+  const [text, setText] = useState(''), bottom = useRef(null)
+  useEffect(() => bottom.current?.scrollIntoView({ block: 'end' }), [messages.length])
+  const canSend = session.state !== 'starting' && session.state !== 'error' && session.state !== 'exited'
+  return <><header class="top"><strong>{session.name}</strong><span>{session.kind} · {session.state} · {session.id}</span></header><section class="messages">{messages.map((m, i) => <Message key={i} msg={m} onSend={onSend} />)}<div ref={bottom} /></section><form class="composer" onSubmit={e => { e.preventDefault(); if (!text.trim() || !canSend) return; onSend('prompt', text); setText('') }}><input value={text} onInput={e => setText(e.currentTarget.value)} placeholder={`Message ${session.kind}: ${session.name}`} /><button disabled={!canSend}>Send</button><button type="button" disabled={!canSend} onClick={() => onSend('steer', text)}>Steer</button><button type="button" onClick={() => onSend('abort')}>Abort</button><button type="button" disabled={!canSend} onClick={() => onSend('compact')}>Compact</button></form></>
+}
+function Message({ msg, onSend }) { if (msg.type === 'thinking') return <details class="msg thinking"><summary>Thinking</summary><pre>{msg.text}</pre></details>; if (msg.type === 'tool') return <details class="msg tool"><summary>{msg.title}</summary><pre>{msg.text}</pre></details>; if (msg.type === 'approval') return <div class="msg approval"><strong>Approval needed</strong><p>{msg.text}</p><div class="approval-actions"><button onClick={() => onSend('approve', '', { request_id: msg.requestId, approved: true })}>Allow</button><button onClick={() => onSend('approve', '', { request_id: msg.requestId, approved: false })}>Deny</button></div></div>; if (msg.type === 'assistant') return <div class="msg assistant markdown" dangerouslySetInnerHTML={{ __html: renderMarkdown(msg.text) }} />; return <div class={`msg ${msg.type}`}>{msg.text}</div> }
+function renderMarkdown(text) { return snarkdown(text || '') }
+function TerminalPane({ sessionId }) { const ref = useRef(null); useEffect(() => { const term = new Terminal({ fontSize: 14, cursorBlink: true, theme: { background: '#15171d' } }); const fit = new FitAddon(); term.loadAddon(fit); term.open(ref.current); fit.fit(); const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/term/${sessionId}${token ? `?token=${encodeURIComponent(token)}` : ''}`); ws.binaryType = 'arraybuffer'; ws.onmessage = e => { if (typeof e.data !== 'string') term.write(new Uint8Array(e.data)) }; ws.onopen = () => resize(term, ws, fit); term.onData(data => ws.readyState === WebSocket.OPEN && ws.send(data)); const onResize = () => resize(term, ws, fit); window.addEventListener('resize', onResize); const timer = setTimeout(onResize, 50); return () => { clearTimeout(timer); window.removeEventListener('resize', onResize); ws.close(); term.dispose() } }, [sessionId]); return <div class="terminal" ref={ref} /> }
+function resize(term, ws, fit) { fit.fit(); if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows })) }
+function normalizeEvent(ev) { if (ev.event === 'state_change' || ev.event === 'response' || ev.event === 'message_start' || ev.event === 'message_end' || ev.event === 'message_update') return null; if (ev.event === 'delta') return { type: 'assistant_delta', text: ev.content || '' }; if (ev.event === 'thinking_delta') return { type: 'thinking_delta', text: ev.content || '' }; if (ev.event === 'tool_delta') return { type: 'tool_delta', title: `tool: ${ev.tool || 'running'}`, text: ev.output || ev.content || '' }; if (ev.event === 'tool_start') return { type: 'tool', title: `tool: ${ev.tool || 'start'}`, text: JSON.stringify(ev.args || ev.raw || {}, null, 2) }; if (ev.event === 'tool_end') return { type: 'tool', title: `tool complete: ${ev.tool || ''}`, text: ev.output || JSON.stringify(ev.raw || {}, null, 2) }; if (ev.event === 'approval_request') return { type: 'approval', requestId: ev.request_id, text: ev.prompt || JSON.stringify(ev.raw || {}) }; if (ev.event === 'error' || ev.event === 'stderr') return { type: 'system', text: `${ev.event}: ${ev.content || ''}` }; return null }
+render(<App />, document.getElementById('app'))

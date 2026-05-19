@@ -1,0 +1,16 @@
+# Local config / secrets
+agentbridge.yaml
+*.log
+
+# Build artifacts
+/agentbridge
+/bin/
+/dist/
+
+# Frontend dependencies and build output
+frontend/node_modules/
+frontend/dist/
+
+# OS/editor
+.DS_Store
+*.swp
