@@ -172,7 +172,7 @@ func (m *Manager) CreateAgent(_ context.Context, kind core.AgentKind, name, cwd,
 			return nil, fmt.Errorf("Hermes gateway not found. Select the Hermes repo root containing tui_gateway/entry.py, or set hermes.cwd to that path. Current selection: %s", dir)
 		}
 	}
-	cmdName, args, env, err := ad.BuildCommand(core.AgentConfig{SessionName: name, Cwd: dir, PiBinary: m.cfg.Pi.Binary, HermesVenv: m.cfg.Hermes.Venv, HermesModule: m.cfg.Hermes.GatewayModule, HermesCwd: dir})
+	cmdName, args, env, err := ad.BuildCommand(core.AgentConfig{SessionName: name, Cwd: dir, PiBinary: m.cfg.Pi.Binary, PiResumeID: resumeID, HermesVenv: m.cfg.Hermes.Venv, HermesModule: m.cfg.Hermes.GatewayModule, HermesCwd: dir})
 	if err != nil {
 		return nil, err
 	}
@@ -219,7 +219,7 @@ func (m *Manager) startAgent(p *sessionRuntime) error {
 	go m.readLoop(p, stdout)
 	go m.stderrLoop(p, stderr)
 	go m.waitLoop(p)
-	if msgs, err := p.adapter.InitialMessages(core.AgentConfig{HermesResumeID: p.resumeID}); err == nil {
+	if msgs, err := p.adapter.InitialMessages(core.AgentConfig{PiResumeID: p.resumeID, HermesResumeID: p.resumeID}); err == nil {
 		for _, b := range msgs {
 			_, _ = stdin.Write(b)
 		}
@@ -501,6 +501,9 @@ func (m *Manager) readLoop(p *sessionRuntime, r io.Reader) {
 		if p.Kind == core.AgentHermes {
 			m.captureHermesRemoteID(p, line)
 		}
+		if p.Kind == core.AgentPi {
+			m.capturePiRemoteID(p, line)
+		}
 		ev, err := p.adapter.ParseEvent(line)
 		if err != nil {
 			ev = &core.AgentEvent{Event: "error", Content: err.Error()}
@@ -544,6 +547,33 @@ func (m *Manager) captureHermesRemoteID(p *sessionRuntime, line []byte) {
 		log.Printf("session %s: hermes remote session_id=%s", p.ID, sid)
 		m.setState(p.ID, core.StateIdle)
 		m.publish(core.AgentEvent{Event: "state_change", SessionID: p.ID, State: core.StateIdle})
+	}
+}
+
+func (m *Manager) capturePiRemoteID(p *sessionRuntime, line []byte) {
+	var msg struct {
+		Type    string         `json:"type"`
+		Command string         `json:"command"`
+		Success bool           `json:"success"`
+		Data    map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(line, &msg); err != nil || msg.Type != "response" || msg.Command != "get_state" || !msg.Success || msg.Data == nil {
+		return
+	}
+	sid, _ := msg.Data["sessionId"].(string)
+	if sid == "" {
+		sid, _ = msg.Data["sessionFile"].(string)
+	}
+	if sid == "" {
+		return
+	}
+	p.mu.Lock()
+	changed := p.remoteID != sid
+	p.remoteID = sid
+	p.mu.Unlock()
+	if changed {
+		log.Printf("session %s: pi remote session_id=%s", p.ID, sid)
+		m.schedulePersist()
 	}
 }
 
@@ -768,7 +798,7 @@ func (m *Manager) restorePersisted() {
 				break
 			}
 			p.adapter = ad
-			if sess.Kind == core.AgentHermes && p.resumeID == "" {
+			if (sess.Kind == core.AgentHermes || sess.Kind == core.AgentPi) && p.resumeID == "" {
 				p.resumeID = ps.RemoteID
 			}
 			if sess.Kind == core.AgentHermes && !isHermesGatewayDir(p.dir) {
@@ -776,7 +806,7 @@ func (m *Manager) restorePersisted() {
 			}
 			p.dir = usableDir(p.dir)
 			p.Cwd = p.dir
-			cmdName, args, env, err := ad.BuildCommand(core.AgentConfig{SessionName: sess.Name, Cwd: p.dir, PiBinary: m.cfg.Pi.Binary, HermesVenv: m.cfg.Hermes.Venv, HermesModule: m.cfg.Hermes.GatewayModule, HermesCwd: p.dir})
+			cmdName, args, env, err := ad.BuildCommand(core.AgentConfig{SessionName: sess.Name, Cwd: p.dir, PiBinary: m.cfg.Pi.Binary, PiResumeID: p.resumeID, HermesVenv: m.cfg.Hermes.Venv, HermesModule: m.cfg.Hermes.GatewayModule, HermesCwd: p.dir})
 			if err != nil {
 				log.Printf("session %s: restore command failed: %v", sess.ID, err)
 				p.State = core.StateError

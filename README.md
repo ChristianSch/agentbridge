@@ -48,7 +48,7 @@ Implemented:
 - Agent restart with exponential backoff
 - Idle reaper for sessions with no clients
 - Session event history replay on subscribe
-- Session/history persistence across AgentBridge restarts (`~/.local/state/agentbridge/sessions.json`, or `$AGENTBRIDGE_STATE_DIR/sessions.json`)
+- Session/history persistence across AgentBridge restarts (`~/.local/state/agentbridge/sessions.json`, or `$AGENTBRIDGE_STATE_DIR/sessions.json`), including Hermes `session.resume` and Pi `--session` resume when remote session IDs are known
 - Separate stderr event capture
 - ntfy notification hook for waiting/approval events
 - Preact/xterm frontend with session sidebar, agent chat, terminal panes, and approval buttons

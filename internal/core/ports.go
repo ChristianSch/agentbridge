@@ -20,6 +20,7 @@ type AgentConfig struct {
 	SessionName    string
 	Cwd            string
 	PiBinary       string
+	PiResumeID     string
 	HermesVenv     string
 	HermesModule   string
 	HermesCwd      string

@@ -20,9 +20,12 @@ func (PiAdapter) BuildCommand(cfg core.AgentConfig) (string, []string, []string,
 		bin = "pi"
 	}
 	// Pi uses the process working directory. Current pi releases do not expose
-	// a --cwd flag, and --session is for resuming a session path/id, not a
-	// display name, so AgentBridge keeps the user-facing name in its own state.
-	return bin, []string{"--mode", "rpc"}, nil, nil
+	// a --cwd flag, so AgentBridge sets cmd.Dir in the process manager.
+	args := []string{"--mode", "rpc"}
+	if cfg.PiResumeID != "" {
+		args = append(args, "--session", cfg.PiResumeID)
+	}
+	return bin, args, nil, nil
 }
 
 func (PiAdapter) SendPrompt(text string) ([]byte, error) {
