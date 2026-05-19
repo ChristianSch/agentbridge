@@ -74,7 +74,7 @@ function App() {
 
   function send(action, text = '', extra = {}, sessionId = active) { if (!sessionId || !ws.current) return; ws.current.send(JSON.stringify({ action, session_id: sessionId, text, ...extra })) }
   async function renameSession(id, name) { const s = await api(`/api/sessions/${encodeURIComponent(id)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) }); setSessions(list => list.map(x => x.id === id ? s : x)) }
-  async function deleteSession(id) { await api(`/api/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' }); setSessions(list => list.filter(s => s.id !== id)); setMessages(prev => { const next = { ...prev }; delete next[id]; return next }); setActive(cur => cur === id ? null : cur) }
+  async function deleteSession(id) { await api(`/api/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' }); subscribed.current.delete(id); setMessages(prev => { const next = { ...prev }; delete next[id]; return next }); const list = await api('/api/sessions'); setSessions(list); setActive(cur => cur === id ? (list.find(s => s.id === localStorage.agentbridgeActiveSession)?.id || list[0]?.id || null) : cur) }
 
   return <div class="app">
     <aside class="sidebar"><div class="brand">AgentBridge <small>{socketState}</small></div><div class="create"><button class="new-session" onClick={() => setFlowKind('pi')}>＋ New session</button></div>{detectInfo && !detectInfo.hermes_profiles?.length && <div class="notice">Hermes not detected</div>}<div class="sessions">{sessions.map(s => <SessionItem session={s} active={s.id === active} onSelect={() => selectSession(s.id)} onRename={renameSession} onDelete={deleteSession} />)}</div></aside>
