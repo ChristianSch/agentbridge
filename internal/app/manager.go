@@ -575,6 +575,10 @@ func (m *Manager) captureHermesRemoteID(p *sessionRuntime, line []byte) {
 		p.State = core.StateIdle
 		p.mu.Unlock()
 		log.Printf("session %s: hermes remote session_id=%s", p.ID, sid)
+		if messages, ok := msg.Result["messages"].([]any); ok && len(messages) > 0 {
+			m.replaceHistory(p.ID, hermesMessagesToEvents(p.ID, messages))
+			log.Printf("session %s: restored %d Hermes history message(s)", p.ID, len(messages))
+		}
 		m.setState(p.ID, core.StateIdle)
 		m.publish(core.AgentEvent{Event: "state_change", SessionID: p.ID, State: core.StateIdle})
 	}
@@ -720,6 +724,54 @@ func (m *Manager) publish(ev core.AgentEvent) {
 	if subCount == 0 && m.shouldNotify(ev) {
 		go m.notify(ev)
 	}
+}
+
+func (m *Manager) replaceHistory(sessionID string, events []core.AgentEvent) {
+	if len(events) > historyLimit {
+		events = events[len(events)-historyLimit:]
+	}
+	m.mu.Lock()
+	m.history[sessionID] = events
+	subCount := len(m.subs[sessionID])
+	chs := make([]chan core.AgentEvent, 0, subCount)
+	for ch := range m.subs[sessionID] {
+		chs = append(chs, ch)
+	}
+	m.mu.Unlock()
+	m.schedulePersist()
+	for _, ev := range events {
+		for _, ch := range chs {
+			select {
+			case ch <- ev:
+			default:
+			}
+		}
+	}
+}
+
+func hermesMessagesToEvents(sessionID string, messages []any) []core.AgentEvent {
+	events := make([]core.AgentEvent, 0, len(messages))
+	for _, item := range messages {
+		m, _ := item.(map[string]any)
+		role, _ := m["role"].(string)
+		text, _ := m["text"].(string)
+		if text == "" {
+			text, _ = m["content"].(string)
+		}
+		switch role {
+		case "user":
+			events = append(events, core.AgentEvent{Event: "user_message", SessionID: sessionID, Content: text})
+		case "assistant":
+			events = append(events, core.AgentEvent{Event: "delta", SessionID: sessionID, Content: text})
+		case "tool":
+			name, _ := m["name"].(string)
+			if text == "" {
+				text, _ = m["context"].(string)
+			}
+			events = append(events, core.AgentEvent{Event: "tool_end", SessionID: sessionID, Tool: name, Output: text})
+		}
+	}
+	return events
 }
 
 func shouldCoalesceHistory(ev core.AgentEvent) bool {
