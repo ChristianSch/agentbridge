@@ -35,6 +35,30 @@ make server
 ./agentbridge --config ./agentbridge.yaml
 ```
 
+## Secure tailnet setup
+
+AgentBridge exposes terminals and coding agents. Treat it like shell access.
+
+Recommended setup:
+
+1. Keep AgentBridge bound to loopback:
+   ```yaml
+   bind: "127.0.0.1:7777"
+   ```
+2. Use a real token:
+   ```sh
+   export AGENTBRIDGE_TOKEN="$(openssl rand -hex 32)"
+   ```
+3. Put Tailscale Serve in front of the local listener:
+   ```sh
+   tailscale serve --bg --http=7777 http://127.0.0.1:7777
+   tailscale serve status
+   ```
+   Then open the Tailscale Serve URL from devices in your tailnet and pass the token as `?token=...` once.
+4. Do not enable Tailscale Funnel for AgentBridge. Funnel makes it internet-facing.
+
+AgentBridge logs a security warning if token auth is disabled, if a development token is used, or if it is bound to a non-loopback address.
+
 ## Current status
 
 Implemented:
