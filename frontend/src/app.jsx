@@ -11,6 +11,7 @@ if (token) localStorage.agentbridgeToken = token
 
 function authHeaders(extra = {}) { return { ...extra, ...(token ? { Authorization: `Bearer ${token}` } : {}) } }
 async function api(path, opts = {}) { const res = await fetch(path, { ...opts, headers: authHeaders(opts.headers) }); if (!res.ok) throw new Error(await res.text()); return res.status === 204 ? null : res.json() }
+function sortSessions(list) { return [...list].sort((a, b) => new Date(b.last_active || b.created_at) - new Date(a.last_active || a.created_at)) }
 
 function App() {
   const [sessions, setSessions] = useState([])
@@ -26,7 +27,7 @@ function App() {
 
   async function refresh() {
     const list = await api('/api/sessions')
-    setSessions(list)
+    setSessions(sortSessions(list))
     setActive(cur => cur || (list.find(s => s.id === localStorage.agentbridgeActiveSession)?.id) || list[0]?.id || null)
   }
 
@@ -62,19 +63,19 @@ function App() {
     sock.onopen = () => { setSocketState('connected'); setSessions(list => { list.forEach(s => subscribe(s.id)); return list }) }
     sock.onerror = () => setSocketState('error')
     sock.onclose = () => setSocketState('closed')
-    sock.onmessage = e => { const ev = JSON.parse(e.data); if (!ev.session_id) { if (ev.event === 'error') addMessage(active || sessions[0]?.id, { type: 'system', text: ev.content || 'WebSocket error' }); return } const msg = normalizeEvent(ev); if (msg) addMessage(ev.session_id, msg); if (ev.event === 'state_change') setSessions(list => list.map(s => s.id === ev.session_id ? { ...s, state: ev.state } : s)) }
+    sock.onmessage = e => { const ev = JSON.parse(e.data); if (!ev.session_id) { if (ev.event === 'error') addMessage(active || sessions[0]?.id, { type: 'system', text: ev.content || 'WebSocket error' }); return } const msg = normalizeEvent(ev); if (msg) addMessage(ev.session_id, msg); if (ev.event === 'state_change') setSessions(list => sortSessions(list.map(s => s.id === ev.session_id ? { ...s, state: ev.state, last_active: new Date().toISOString() } : s))) }
     return () => sock.close()
   }, [])
   useEffect(() => { sessions.forEach(s => subscribe(s.id)) }, [sessions.length])
 
   async function create(req) {
     const s = await api('/api/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(req) })
-    setSessions(prev => [...prev, s]); selectSession(s.id); setFlowKind(null); setTimeout(() => subscribe(s.id), 0)
+    setSessions(prev => sortSessions([s, ...prev])); selectSession(s.id); setFlowKind(null); setTimeout(() => subscribe(s.id), 0)
   }
 
   function send(action, text = '', extra = {}, sessionId = active) { if (!sessionId || !ws.current) return; ws.current.send(JSON.stringify({ action, session_id: sessionId, text, ...extra })) }
-  async function renameSession(id, name) { const s = await api(`/api/sessions/${encodeURIComponent(id)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) }); setSessions(list => list.map(x => x.id === id ? s : x)) }
-  async function deleteSession(id) { await api(`/api/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' }); subscribed.current.delete(id); setMessages(prev => { const next = { ...prev }; delete next[id]; return next }); const list = await api('/api/sessions'); setSessions(list); setActive(cur => cur === id ? (list.find(s => s.id === localStorage.agentbridgeActiveSession)?.id || list[0]?.id || null) : cur) }
+  async function renameSession(id, name) { const s = await api(`/api/sessions/${encodeURIComponent(id)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) }); setSessions(list => sortSessions(list.map(x => x.id === id ? s : x))) }
+  async function deleteSession(id) { await api(`/api/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' }); subscribed.current.delete(id); setMessages(prev => { const next = { ...prev }; delete next[id]; return next }); const list = sortSessions(await api('/api/sessions')); setSessions(list); setActive(cur => cur === id ? (list.find(s => s.id === localStorage.agentbridgeActiveSession)?.id || list[0]?.id || null) : cur) }
 
   return <div class="app">
     <aside class="sidebar"><div class="brand">AgentBridge <small>{socketState}</small></div><div class="create"><button class="new-session" onClick={() => setFlowKind('pi')}>＋ New session</button></div>{detectInfo && !detectInfo.hermes_profiles?.length && <div class="notice">Hermes not detected</div>}<div class="sessions">{sessions.map(s => <SessionItem session={s} active={s.id === active} onSelect={() => selectSession(s.id)} onRename={renameSession} onDelete={deleteSession} />)}</div></aside>

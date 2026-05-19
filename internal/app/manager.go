@@ -176,7 +176,8 @@ func (m *Manager) CreateAgent(_ context.Context, kind core.AgentKind, name, cwd,
 	if err != nil {
 		return nil, err
 	}
-	p := &sessionRuntime{Session: core.Session{ID: id, Kind: kind, Name: name, Cwd: dir, State: core.StateStarting, CreatedAt: time.Now()}, adapter: ad, cmdName: cmdName, args: args, env: env, dir: dir, resumeID: resumeID, lastUse: time.Now()}
+	now := time.Now()
+	p := &sessionRuntime{Session: core.Session{ID: id, Kind: kind, Name: name, Cwd: dir, State: core.StateStarting, CreatedAt: now, LastActive: now}, adapter: ad, cmdName: cmdName, args: args, env: env, dir: dir, resumeID: resumeID, lastUse: now}
 	log.Printf("session %s: starting %s agent name=%q cwd=%q cmd=%q args=%q", id, kind, name, cwd, cmdName, args)
 	if err := m.startAgent(p); err != nil {
 		log.Printf("session %s: start failed: %v", id, err)
@@ -242,7 +243,8 @@ func (m *Manager) CreateTerminal(_ context.Context, name, cwd, shell string) (*c
 	if name == "" {
 		name = id
 	}
-	p := &sessionRuntime{Session: core.Session{ID: id, Kind: core.AgentTerminal, Name: name, Cwd: cwd, State: core.StateStarting, CreatedAt: time.Now()}, dir: cwd, cmdName: shell, lastUse: time.Now()}
+	now := time.Now()
+	p := &sessionRuntime{Session: core.Session{ID: id, Kind: core.AgentTerminal, Name: name, Cwd: cwd, State: core.StateStarting, CreatedAt: now, LastActive: now}, dir: cwd, cmdName: shell, lastUse: now}
 	log.Printf("session %s: starting terminal name=%q cwd=%q shell=%q", id, name, cwd, shell)
 	if err := m.startTerminal(p, shell); err != nil {
 		log.Printf("session %s: terminal start failed: %v", id, err)
@@ -278,7 +280,9 @@ func (m *Manager) startTerminal(p *sessionRuntime, shell string) error {
 	p.cmdName = shell
 	p.Cwd = dir
 	p.State = core.StateRunning
-	p.lastUse = time.Now()
+	now := time.Now()
+	p.lastUse = now
+	p.LastActive = now
 	p.mu.Unlock()
 	go m.terminalReadLoop(p, tr)
 	go m.waitLoop(p)
@@ -304,7 +308,16 @@ func (m *Manager) List() []core.Session {
 	for _, p := range m.sessions {
 		out = append(out, p.Session)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	sort.Slice(out, func(i, j int) bool {
+		li, lj := out[i].LastActive, out[j].LastActive
+		if li.IsZero() {
+			li = out[i].CreatedAt
+		}
+		if lj.IsZero() {
+			lj = out[j].CreatedAt
+		}
+		return li.After(lj)
+	})
 	return out
 }
 func (m *Manager) Get(id string) (core.Session, bool) {
@@ -328,8 +341,10 @@ func (m *Manager) Rename(id, name string) (core.Session, error) {
 		m.mu.Unlock()
 		return core.Session{}, errors.New("session not found")
 	}
+	now := time.Now()
 	p.Name = name
-	p.lastUse = time.Now()
+	p.lastUse = now
+	p.LastActive = now
 	sess := p.Session
 	m.mu.Unlock()
 	m.schedulePersist()
@@ -410,7 +425,9 @@ func (m *Manager) Send(c core.ClientCommand) error {
 		log.Printf("session %s hermes stdin: %.1000s", p.ID, string(b))
 	}
 	p.mu.Lock()
-	p.lastUse = time.Now()
+	now := time.Now()
+	p.lastUse = now
+	p.LastActive = now
 	if p.Kind == core.AgentPi {
 		log.Printf("session %s pi stdin: %.1000s", p.ID, string(b))
 	}
@@ -548,7 +565,9 @@ func (m *Manager) readLoop(p *sessionRuntime, r io.Reader) {
 			log.Printf("session %s event state=%s", p.ID, ev.State)
 			p.mu.Lock()
 			p.State = ev.State
-			p.lastUse = time.Now()
+			now := time.Now()
+			p.lastUse = now
+			p.LastActive = now
 			p.mu.Unlock()
 			m.setState(p.ID, ev.State)
 		} else if ev.Event != "delta" {
@@ -749,7 +768,9 @@ func (m *Manager) setState(id string, state core.SessionState) {
 	m.mu.Lock()
 	if p, ok := m.sessions[id]; ok {
 		p.State = state
-		p.lastUse = time.Now()
+		now := time.Now()
+		p.lastUse = now
+		p.LastActive = now
 	}
 	m.mu.Unlock()
 	m.schedulePersist()
@@ -949,6 +970,9 @@ func (m *Manager) restorePersisted() {
 		if sess.CreatedAt.IsZero() {
 			sess.CreatedAt = time.Now()
 		}
+		if sess.LastActive.IsZero() {
+			sess.LastActive = sess.CreatedAt
+		}
 		sess.State = core.StateStarting
 		p := &sessionRuntime{Session: sess, dir: ps.Dir, cmdName: ps.Shell, resumeID: ps.ResumeID, remoteID: ps.RemoteID, lastUse: time.Now()}
 		if p.dir == "" {
@@ -1025,7 +1049,16 @@ func (m *Manager) persistNow() {
 		st.Sessions = append(st.Sessions, ps)
 	}
 	m.mu.RUnlock()
-	sort.Slice(st.Sessions, func(i, j int) bool { return st.Sessions[i].Session.CreatedAt.After(st.Sessions[j].Session.CreatedAt) })
+	sort.Slice(st.Sessions, func(i, j int) bool {
+		li, lj := st.Sessions[i].Session.LastActive, st.Sessions[j].Session.LastActive
+		if li.IsZero() {
+			li = st.Sessions[i].Session.CreatedAt
+		}
+		if lj.IsZero() {
+			lj = st.Sessions[j].Session.CreatedAt
+		}
+		return li.After(lj)
+	})
 	b, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
 		log.Printf("session persistence: marshal failed: %v", err)

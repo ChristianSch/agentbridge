@@ -22,12 +22,13 @@ const (
 )
 
 type Session struct {
-	ID        string       `json:"id"`
-	Kind      AgentKind    `json:"kind"`
-	Name      string       `json:"name"`
-	Cwd       string       `json:"cwd"`
-	State     SessionState `json:"state"`
-	CreatedAt time.Time    `json:"created_at"`
+	ID         string       `json:"id"`
+	Kind       AgentKind    `json:"kind"`
+	Name       string       `json:"name"`
+	Cwd        string       `json:"cwd"`
+	State      SessionState `json:"state"`
+	CreatedAt  time.Time    `json:"created_at"`
+	LastActive time.Time    `json:"last_active"`
 }
 
 type AgentEvent struct {
