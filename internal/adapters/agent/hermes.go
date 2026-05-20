@@ -133,7 +133,14 @@ func (*HermesAdapter) ParseEvent(b []byte) (*core.AgentEvent, error) {
 	case "session.info":
 		return &core.AgentEvent{Event: "state_change", State: core.StateIdle, Raw: m}, nil
 	case "approval.request":
-		return &core.AgentEvent{Event: "approval_request", RequestID: str(params["id"]), Prompt: str(params["prompt"]), Raw: m}, nil
+		prompt := str(params["prompt"])
+		if prompt == "" {
+			prompt = str(payload["description"])
+		}
+		if prompt == "" {
+			prompt = str(payload["command"])
+		}
+		return &core.AgentEvent{Event: "approval_request", RequestID: str(params["id"]), Prompt: prompt, Command: str(payload["command"]), Description: str(payload["description"]), Args: payload, Raw: m}, nil
 	default:
 		return &core.AgentEvent{Event: "raw", Raw: m}, nil
 	}

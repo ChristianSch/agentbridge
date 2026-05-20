@@ -32,16 +32,18 @@ type Session struct {
 }
 
 type AgentEvent struct {
-	Event     string         `json:"event"`
-	SessionID string         `json:"session_id,omitempty"`
-	Content   string         `json:"content,omitempty"`
-	Tool      string         `json:"tool,omitempty"`
-	Args      map[string]any `json:"args,omitempty"`
-	Output    string         `json:"output,omitempty"`
-	State     SessionState   `json:"state,omitempty"`
-	RequestID string         `json:"request_id,omitempty"`
-	Prompt    string         `json:"prompt,omitempty"`
-	Raw       map[string]any `json:"raw,omitempty"`
+	Event       string         `json:"event"`
+	SessionID   string         `json:"session_id,omitempty"`
+	Content     string         `json:"content,omitempty"`
+	Tool        string         `json:"tool,omitempty"`
+	Args        map[string]any `json:"args,omitempty"`
+	Output      string         `json:"output,omitempty"`
+	State       SessionState   `json:"state,omitempty"`
+	RequestID   string         `json:"request_id,omitempty"`
+	Prompt      string         `json:"prompt,omitempty"`
+	Command     string         `json:"command,omitempty"`
+	Description string         `json:"description,omitempty"`
+	Raw         map[string]any `json:"raw,omitempty"`
 }
 
 type ClientCommand struct {
