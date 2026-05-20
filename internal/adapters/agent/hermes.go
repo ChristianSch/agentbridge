@@ -65,8 +65,12 @@ func (h *HermesAdapter) SendFollowUp(text string) ([]byte, error) { return h.Sen
 func (h *HermesAdapter) SendCompact() ([]byte, error) {
 	return h.req("session.compress", map[string]any{})
 }
-func (h *HermesAdapter) SendApproval(id string, approved bool) ([]byte, error) {
-	return h.req("approval.respond", map[string]any{"id": id, "approved": approved})
+func (h *HermesAdapter) SendApproval(_ string, approved bool) ([]byte, error) {
+	choice := "deny"
+	if approved {
+		choice = "allow"
+	}
+	return h.req("approval.respond", map[string]any{"choice": choice})
 }
 
 func (h *HermesAdapter) req(method string, params any) ([]byte, error) {
