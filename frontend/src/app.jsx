@@ -51,6 +51,12 @@ function App() {
         if (last?.type === 'tool' && last.title === msg.title) return { ...prev, [sessionId]: [...list.slice(0, -1), { ...last, text: msg.text || last.text }] }
         return { ...prev, [sessionId]: [...list, { type: 'tool', title: msg.title, text: msg.text }] }
       }
+      if (msg.type === 'activity_summary') {
+        const lastUser = list.map(x => x.type).lastIndexOf('user')
+        let existing = -1
+        for (let i = list.length - 1; i > lastUser; i--) if (list[i].type === 'activity_summary') { existing = i; break }
+        if (existing >= 0) return { ...prev, [sessionId]: [...list.slice(0, existing), msg, ...list.slice(existing + 1)] }
+      }
       return { ...prev, [sessionId]: [...list, msg] }
     })
   }
@@ -133,7 +139,7 @@ function AgentChat({ session, messages, onSend }) {
 }
 function CommandMenu({ text, onPick }) { const q = text.startsWith('/') ? text.split(/\s+/)[0].toLowerCase() : ''; const items = bridgeCommands.filter(c => !q || c.name.startsWith(q)); return <div class="command-menu"><div class="command-help">Bridge commands. Unknown slash commands are sent through to the agent.</div>{items.map(cmd => <button type="button" onClick={() => onPick(cmd)}><span>{cmd.name}</span><small>{cmd.hint}</small></button>)}</div> }
 function parseBridgeCommand(text) { const trimmed = text.trim(); const [name, ...rest] = trimmed.split(/\s+/); const cmd = bridgeCommands.find(c => c.name === name.toLowerCase()); if (!cmd) return null; return { action: cmd.action, text: cmd.takesText ? rest.join(' ') : '' } }
-function Message({ msg, onSend }) { if (msg.type === 'activity') return <ActivityGroup msg={msg} />; if (msg.type === 'history') return <div class="msg history">{msg.text}</div>; if (msg.type === 'thinking') return <details class="msg thinking"><summary>Thinking</summary><pre>{msg.text}</pre></details>; if (msg.type === 'tool') return <details class="msg tool"><summary>{msg.title}</summary><pre>{msg.text}</pre></details>; if (msg.type === 'approval') return <ApprovalMessage msg={msg} onSend={onSend} />; if (msg.type === 'assistant') return <CopyableMessage className="msg assistant markdown" text={msg.text} html={renderMarkdown(msg.text)} />; if (msg.type === 'user') return <CopyableMessage className="msg user" text={msg.text} />; return <div class={`msg ${msg.type}`}>{msg.text}</div> }
+function Message({ msg, onSend }) { if (msg.type === 'activity') return <ActivityGroup msg={msg} />; if (msg.type === 'activity_summary') return <div class="msg activity-summary">{msg.text}</div>; if (msg.type === 'history') return <div class="msg history">{msg.text}</div>; if (msg.type === 'thinking') return <details class="msg thinking"><summary>Thinking</summary><pre>{msg.text}</pre></details>; if (msg.type === 'tool') return <details class="msg tool"><summary>{msg.title}</summary><pre>{msg.text}</pre></details>; if (msg.type === 'approval') return <ApprovalMessage msg={msg} onSend={onSend} />; if (msg.type === 'assistant') return <CopyableMessage className="msg assistant markdown" text={msg.text} html={renderMarkdown(msg.text)} />; if (msg.type === 'user') return <CopyableMessage className="msg user" text={msg.text} />; return <div class={`msg ${msg.type}`}>{msg.text}</div> }
 function ApprovalMessage({ msg, onSend }) { return <div class="msg approval"><div class="approval-head"><strong>Approval needed</strong>{msg.command && <span>command</span>}</div>{msg.description && <p class="approval-desc">{msg.description}</p>}{msg.command ? <pre class="approval-command">{msg.command}</pre> : <p>{msg.text}</p>}<details><summary>Raw request</summary><pre>{JSON.stringify(msg.raw || {}, null, 2)}</pre></details><div class="approval-actions"><button onClick={() => onSend('approve', '', { request_id: msg.requestId, approved: true })}>Allow</button><button onClick={() => onSend('approve', '', { request_id: msg.requestId, approved: false })}>Deny</button></div></div> }
 function CopyableMessage({ className, text, html }) { const [copied, setCopied] = useState(false); async function copy() { try { await navigator.clipboard.writeText(text || ''); setCopied(true); setTimeout(() => setCopied(false), 1200) } catch {} } return <div class={`${className} copyable`}>{html ? <div dangerouslySetInnerHTML={{ __html: html }} /> : text}<button type="button" class="copy-button" title="Copy message" onClick={copy}>{copied ? 'copied' : 'copy'}</button></div> }
 function ActivityGroup({ msg }) { const thoughts = msg.items.filter(i => i.type === 'thinking').length, tools = msg.items.filter(i => i.type === 'tool').length; return <details class="msg activity"><summary>Activity{thoughts ? ` · ${thoughts} thinking` : ''}{tools ? ` · ${tools} tool${tools === 1 ? '' : 's'}` : ''}</summary>{msg.items.map((item, i) => <div class={`activity-item ${item.type}`} key={i}><strong>{item.type === 'tool' ? item.title : 'Thinking'}</strong><pre>{item.text}</pre></div>)}</details> }
@@ -145,6 +151,7 @@ function normalizeEvent(ev) {
   if (ev.event === 'state_change' || ev.event === 'response' || ev.event === 'message_start' || ev.event === 'message_end' || ev.event === 'message_update') return null
   if (ev.event === 'history_source') return { type: 'history', text: ev.content || 'Loaded conversation history' }
   if (ev.event === 'user_message') return { type: 'user', text: ev.content || '' }
+  if (ev.event === 'activity_summary') return { type: 'activity_summary', text: ev.content || '' }
   if (ev.event === 'delta') return { type: 'assistant_delta', text: ev.content || '' }
   if (ev.event === 'thinking_delta') return { type: 'thinking_delta', text: ev.content || '' }
   if (ev.event === 'tool_delta') return { type: 'tool_delta', title: `tool: ${ev.tool || 'running'}`, text: ev.output || ev.content || '' }
