@@ -1,5 +1,6 @@
 # Local config / secrets
 agentbridge.yaml
+.env
 *.log
 
 # Build artifacts
