@@ -8,6 +8,7 @@ import (
 
 	"github.com/ChristianSch/agentbridge/internal/adapters/agent"
 	httpadapter "github.com/ChristianSch/agentbridge/internal/adapters/http"
+	"github.com/ChristianSch/agentbridge/internal/adapters/llm"
 	"github.com/ChristianSch/agentbridge/internal/app"
 	"github.com/ChristianSch/agentbridge/internal/config"
 	"github.com/ChristianSch/agentbridge/internal/static"
@@ -19,7 +20,7 @@ func main() {
 		log.Fatal(err)
 	}
 	warnSecurity(cfg.Bind, cfg.Token)
-	mgr := app.NewManager(cfg, agent.NewPiAdapter(), agent.NewHermesAdapter())
+	mgr := app.NewManager(cfg, llm.NewActivitySummarizer(cfg.ActivitySummary), agent.NewPiAdapter(), agent.NewHermesAdapter())
 	srv := httpadapter.New(cfg, mgr, static.FS())
 	log.Printf("agentbridge listening on %s", cfg.Bind)
 	log.Fatal(http.ListenAndServe(cfg.Bind, srv.Handler()))

@@ -9,6 +9,15 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+type ActivitySummaryConfig struct {
+	Enabled  bool          `yaml:"enabled"`
+	Provider string        `yaml:"provider"`
+	Endpoint string        `yaml:"endpoint"`
+	APIKey   string        `yaml:"api_key"`
+	Model    string        `yaml:"model"`
+	Debounce time.Duration `yaml:"debounce"`
+}
+
 type Config struct {
 	Bind  string `yaml:"bind"`
 	Token string `yaml:"token"`
@@ -39,6 +48,7 @@ type Config struct {
 		NtfyServer string   `yaml:"ntfy_server"`
 		NotifyOn   []string `yaml:"notify_on"`
 	} `yaml:"notifications"`
+	ActivitySummary ActivitySummaryConfig `yaml:"activity_summary"`
 }
 
 type Project struct {
@@ -61,6 +71,8 @@ func Load(path string) (Config, error) {
 		cfg.Terminal.Shell = "/bin/bash"
 	}
 	cfg.Terminal.MaxSessions = 10
+	cfg.ActivitySummary.Enabled = true
+	cfg.ActivitySummary.Debounce = 900 * time.Millisecond
 
 	if b, err := os.ReadFile(path); err == nil {
 		if err := yaml.Unmarshal(b, &cfg); err != nil {
@@ -71,6 +83,24 @@ func Load(path string) (Config, error) {
 	}
 	if tok := os.Getenv("AGENTBRIDGE_TOKEN"); tok != "" {
 		cfg.Token = tok
+	}
+	if provider := os.Getenv("AGENTBRIDGE_ACTIVITY_PROVIDER"); provider != "" {
+		cfg.ActivitySummary.Provider = provider
+	}
+	if endpoint := os.Getenv("AGENTBRIDGE_ACTIVITY_ENDPOINT"); endpoint != "" {
+		cfg.ActivitySummary.Endpoint = endpoint
+	}
+	if model := os.Getenv("AGENTBRIDGE_ACTIVITY_MODEL"); model != "" {
+		cfg.ActivitySummary.Model = model
+	}
+	if key := os.Getenv("AGENTBRIDGE_ACTIVITY_API_KEY"); key != "" {
+		cfg.ActivitySummary.APIKey = key
+	}
+	if key := os.Getenv("ANTHROPIC_API_KEY"); cfg.ActivitySummary.APIKey == "" && key != "" {
+		cfg.ActivitySummary.APIKey = key
+	}
+	if key := os.Getenv("OPENAI_API_KEY"); cfg.ActivitySummary.APIKey == "" && key != "" {
+		cfg.ActivitySummary.APIKey = key
 	}
 	return cfg, nil
 }

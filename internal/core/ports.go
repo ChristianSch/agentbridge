@@ -31,6 +31,10 @@ type EventSink interface {
 	Publish(event AgentEvent)
 }
 
+type ActivitySummarizer interface {
+	SummarizeActivity(ctx context.Context, facts []ActivityFact) (string, error)
+}
+
 type TerminalIO interface {
 	Output() <-chan []byte
 	Write([]byte) (int, error)

@@ -37,6 +37,7 @@ type Manager struct {
 	persistPath  string
 	persistMu    sync.Mutex
 	persistTimer *time.Timer
+	activity     *activityNarrator
 }
 
 type sessionRuntime struct {
@@ -138,8 +139,9 @@ func (t *terminalRuntime) broadcast(b []byte) {
 	}
 }
 
-func NewManager(cfg config.Config, adapters ...core.AgentAdapter) *Manager {
+func NewManager(cfg config.Config, summarizer core.ActivitySummarizer, adapters ...core.AgentAdapter) *Manager {
 	m := &Manager{cfg: cfg, sessions: map[string]*sessionRuntime{}, subs: map[string]map[chan core.AgentEvent]struct{}{}, history: map[string][]core.AgentEvent{}, adapters: map[core.AgentKind]core.AgentAdapter{}, persistPath: defaultPersistPath()}
+	m.activity = newActivityNarrator(cfg.ActivitySummary, summarizer, m.publish)
 	for _, a := range adapters {
 		m.adapters[a.Kind()] = a
 	}
@@ -777,6 +779,9 @@ func (m *Manager) setState(id string, state core.SessionState) {
 }
 
 func (m *Manager) publish(ev core.AgentEvent) {
+	if ev.Event != "activity_summary" {
+		m.activity.Observe(ev)
+	}
 	m.mu.Lock()
 	if ev.SessionID != "" {
 		h := m.history[ev.SessionID]

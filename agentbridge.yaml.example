@@ -30,6 +30,14 @@ notifications:
     - "waiting_for_input"
     - "approval_request"
 
+activity_summary:
+  enabled: true
+  provider: "" # "openai" or "anthropic"; inferred from model/endpoint when empty
+  endpoint: "" # optional; defaults to provider API when model is set
+  api_key: "" # or AGENTBRIDGE_ACTIVITY_API_KEY / OPENAI_API_KEY / ANTHROPIC_API_KEY
+  model: "" # e.g. gpt-4o-mini or claude-3-5-haiku-latest; empty uses deterministic summaries
+  debounce: "900ms"
+
 projects:
   - name: "webapp"
     path: "/home/user/projects/webapp"

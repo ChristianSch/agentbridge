@@ -32,6 +32,13 @@ type Session struct {
 	OwnerID    string       `json:"owner_id,omitempty"`
 }
 
+type ActivityFact struct {
+	Event string         `json:"event"`
+	Tool  string         `json:"tool,omitempty"`
+	Args  map[string]any `json:"args,omitempty"`
+	Text  string         `json:"text,omitempty"`
+}
+
 type AgentEvent struct {
 	Event       string         `json:"event"`
 	SessionID   string         `json:"session_id,omitempty"`

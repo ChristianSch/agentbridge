@@ -86,6 +86,7 @@ Implemented:
 - Session/history persistence across AgentBridge restarts (`~/.local/state/agentbridge/sessions.json`, or `$AGENTBRIDGE_STATE_DIR/sessions.json`), including Hermes `session.resume` and Pi `--session` resume when remote session IDs are known
 - Separate stderr event capture
 - ntfy notification hook for waiting/approval events
+- Activity summaries for hidden thinking/tool activity, with deterministic fallback or a cheap OpenAI/Anthropic model via `activity_summary`
 - Preact/xterm frontend with session sidebar, agent chat, terminal panes, and approval buttons
 
 ## Useful API
