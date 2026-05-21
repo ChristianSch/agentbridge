@@ -148,7 +148,7 @@ func NewManager(cfg config.Config, adapters ...core.AgentAdapter) *Manager {
 	return m
 }
 
-func (m *Manager) CreateAgent(_ context.Context, kind core.AgentKind, name, cwd, resumeID string) (*core.Session, error) {
+func (m *Manager) CreateAgent(ctx context.Context, kind core.AgentKind, name, cwd, resumeID string) (*core.Session, error) {
 	ad, ok := m.adapters[kind]
 	if !ok {
 		return nil, fmt.Errorf("unsupported agent kind %q", kind)
@@ -177,7 +177,7 @@ func (m *Manager) CreateAgent(_ context.Context, kind core.AgentKind, name, cwd,
 		return nil, err
 	}
 	now := time.Now()
-	p := &sessionRuntime{Session: core.Session{ID: id, Kind: kind, Name: name, Cwd: dir, State: core.StateStarting, CreatedAt: now, LastActive: now}, adapter: ad, cmdName: cmdName, args: args, env: env, dir: dir, resumeID: resumeID, lastUse: now}
+	p := &sessionRuntime{Session: core.Session{ID: id, Kind: kind, Name: name, Cwd: dir, State: core.StateStarting, CreatedAt: now, LastActive: now, OwnerID: core.OwnerID(ctx)}, adapter: ad, cmdName: cmdName, args: args, env: env, dir: dir, resumeID: resumeID, lastUse: now}
 	log.Printf("session %s: starting %s agent name=%q cwd=%q cmd=%q args=%q", id, kind, name, cwd, cmdName, args)
 	if err := m.startAgent(p); err != nil {
 		log.Printf("session %s: start failed: %v", id, err)
@@ -228,7 +228,7 @@ func (m *Manager) startAgent(p *sessionRuntime) error {
 	return nil
 }
 
-func (m *Manager) CreateTerminal(_ context.Context, name, cwd, shell string) (*core.Session, error) {
+func (m *Manager) CreateTerminal(ctx context.Context, name, cwd, shell string) (*core.Session, error) {
 	cwd = usableDir(cwd)
 	if m.cfg.Terminal.MaxSessions > 0 && m.countTerminals() >= m.cfg.Terminal.MaxSessions {
 		return nil, fmt.Errorf("terminal session limit reached (%d)", m.cfg.Terminal.MaxSessions)
@@ -244,7 +244,7 @@ func (m *Manager) CreateTerminal(_ context.Context, name, cwd, shell string) (*c
 		name = id
 	}
 	now := time.Now()
-	p := &sessionRuntime{Session: core.Session{ID: id, Kind: core.AgentTerminal, Name: name, Cwd: cwd, State: core.StateStarting, CreatedAt: now, LastActive: now}, dir: cwd, cmdName: shell, lastUse: now}
+	p := &sessionRuntime{Session: core.Session{ID: id, Kind: core.AgentTerminal, Name: name, Cwd: cwd, State: core.StateStarting, CreatedAt: now, LastActive: now, OwnerID: core.OwnerID(ctx)}, dir: cwd, cmdName: shell, lastUse: now}
 	log.Printf("session %s: starting terminal name=%q cwd=%q shell=%q", id, name, cwd, shell)
 	if err := m.startTerminal(p, shell); err != nil {
 		log.Printf("session %s: terminal start failed: %v", id, err)

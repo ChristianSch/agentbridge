@@ -109,6 +109,13 @@ func (a *authManager) hasCredential() bool {
 	return a != nil && a.user != nil && len(a.user.Credentials) > 0
 }
 
+func (a *authManager) ownerID() string {
+	if a == nil || a.user == nil || len(a.user.ID) == 0 {
+		return ""
+	}
+	return base64.RawURLEncoding.EncodeToString(a.user.ID)
+}
+
 func (a *authManager) validSession(r *http.Request) bool {
 	if a == nil {
 		return false

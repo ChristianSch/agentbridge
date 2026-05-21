@@ -29,6 +29,7 @@ type Session struct {
 	State      SessionState `json:"state"`
 	CreatedAt  time.Time    `json:"created_at"`
 	LastActive time.Time    `json:"last_active"`
+	OwnerID    string       `json:"owner_id,omitempty"`
 }
 
 type AgentEvent struct {

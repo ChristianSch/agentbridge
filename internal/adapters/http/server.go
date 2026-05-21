@@ -74,6 +74,20 @@ func (s *Server) hasAuth(r *http.Request) bool {
 	return s.tokenOK(r) || (s.authn != nil && s.authn.validSession(r))
 }
 
+func (s *Server) ownerID(r *http.Request) string {
+	if s.authn != nil && (s.authn.validSession(r) || s.tokenOK(r)) {
+		return s.authn.ownerID()
+	}
+	if s.tokenOK(r) {
+		return "token"
+	}
+	return ""
+}
+
+func visibleToOwner(sess core.Session, ownerID string) bool {
+	return sess.OwnerID == "" || ownerID == "" || sess.OwnerID == ownerID
+}
+
 func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if s.cfg.Token != "" || s.authn != nil {
@@ -84,7 +98,7 @@ func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 			}
 		}
 		log.Printf("http %s %s remote=%s", r.Method, r.URL.Path, r.RemoteAddr)
-		next(w, r)
+		next(w, r.WithContext(core.WithOwnerID(r.Context(), s.ownerID(r))))
 	}
 }
 
@@ -98,7 +112,7 @@ func (s *Server) uiAuth(next http.Handler) http.Handler {
 			http.Redirect(w, r, "/login", http.StatusFound)
 			return
 		}
-		next.ServeHTTP(w, r)
+		next.ServeHTTP(w, r.WithContext(core.WithOwnerID(r.Context(), s.ownerID(r))))
 	})
 }
 
@@ -207,7 +221,14 @@ func (s *Server) existingProjects() []config.Project {
 func (s *Server) sessions(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, s.store.List())
+		ownerID := core.OwnerID(r.Context())
+		list := []core.Session{}
+		for _, sess := range s.store.List() {
+			if visibleToOwner(sess, ownerID) {
+				list = append(list, sess)
+			}
+		}
+		writeJSON(w, list)
 	case http.MethodPost:
 		var req struct {
 			Kind                       core.AgentKind `json:"kind"`
@@ -240,6 +261,10 @@ func (s *Server) sessionByID(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/api/sessions/")
 	switch r.Method {
 	case http.MethodPatch:
+		if sess, ok := s.store.Get(id); !ok || !visibleToOwner(sess, core.OwnerID(r.Context())) {
+			http.Error(w, "session not found", 404)
+			return
+		}
 		var req struct {
 			Name string `json:"name"`
 		}
@@ -254,6 +279,10 @@ func (s *Server) sessionByID(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, sess)
 	case http.MethodDelete:
+		if sess, ok := s.store.Get(id); !ok || !visibleToOwner(sess, core.OwnerID(r.Context())) {
+			http.Error(w, "session not found", 404)
+			return
+		}
 		log.Printf("delete session id=%s", id)
 		if err := s.store.Kill(id); err != nil {
 			http.Error(w, err.Error(), 404)
@@ -293,6 +322,10 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 		if raw, ok := msg["subscribe"]; ok {
 			var id string
 			_ = json.Unmarshal(raw, &id)
+			if sess, ok := s.store.Get(id); !ok || !visibleToOwner(sess, core.OwnerID(r.Context())) {
+				write(map[string]any{"event": "error", "content": "session not found"})
+				continue
+			}
 			log.Printf("ws subscribe session=%s", id)
 			events, cancel, err := s.store.Subscribe(id)
 			if err != nil {
@@ -322,6 +355,10 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 			write(map[string]any{"event": "error", "content": err.Error()})
 			continue
 		}
+		if sess, ok := s.store.Get(cmd.SessionID); !ok || !visibleToOwner(sess, core.OwnerID(r.Context())) {
+			write(map[string]any{"event": "error", "content": "session not found"})
+			continue
+		}
 		log.Printf("ws command action=%s session=%s text_len=%d", cmd.Action, cmd.SessionID, len(cmd.Text))
 		if err := s.store.Send(cmd); err != nil {
 			write(map[string]any{"event": "error", "content": err.Error()})
@@ -332,6 +369,10 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 func (s *Server) termWS(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/ws/term/")
 	log.Printf("ws terminal connect session=%s remote=%s", id, r.RemoteAddr)
+	if sess, ok := s.store.Get(id); !ok || !visibleToOwner(sess, core.OwnerID(r.Context())) {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
 	term, detach, err := s.store.Terminal(id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
