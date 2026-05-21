@@ -141,5 +141,24 @@ function groupMessages(messages) { const out = []; for (const msg of messages) {
 function renderMarkdown(text) { return snarkdown(text || '') }
 function TerminalPane({ sessionId }) { const ref = useRef(null); useEffect(() => { const term = new Terminal({ fontSize: 14, cursorBlink: true, theme: { background: '#15171d' } }); const fit = new FitAddon(); term.loadAddon(fit); term.open(ref.current); fit.fit(); const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/term/${sessionId}${token ? `?token=${encodeURIComponent(token)}` : ''}`); ws.binaryType = 'arraybuffer'; ws.onmessage = e => { if (typeof e.data !== 'string') term.write(new Uint8Array(e.data)) }; ws.onopen = () => resize(term, ws, fit); term.onData(data => ws.readyState === WebSocket.OPEN && ws.send(data)); const onResize = () => resize(term, ws, fit); window.addEventListener('resize', onResize); const timer = setTimeout(onResize, 50); return () => { clearTimeout(timer); window.removeEventListener('resize', onResize); ws.close(); term.dispose() } }, [sessionId]); return <div class="terminal" ref={ref} /> }
 function resize(term, ws, fit) { fit.fit(); if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows })) }
-function normalizeEvent(ev) { if (ev.event === 'state_change' || ev.event === 'response' || ev.event === 'message_start' || ev.event === 'message_end' || ev.event === 'message_update') return null; if (ev.event === 'history_source') return { type: 'history', text: ev.content || 'Loaded conversation history' }; if (ev.event === 'user_message') return { type: 'user', text: ev.content || '' }; if (ev.event === 'delta') return { type: 'assistant_delta', text: ev.content || '' }; if (ev.event === 'thinking_delta') return { type: 'thinking_delta', text: ev.content || '' }; if (ev.event === 'tool_delta') return { type: 'tool_delta', title: `tool: ${ev.tool || 'running'}`, text: ev.output || ev.content || '' }; if (ev.event === 'tool_start') return { type: 'tool', title: `tool: ${ev.tool || 'start'}`, text: JSON.stringify(ev.args || ev.raw || {}, null, 2) }; if (ev.event === 'tool_end') return { type: 'tool', title: `tool complete: ${ev.tool || ''}`, text: ev.output || JSON.stringify(ev.raw || {}, null, 2) }; if (ev.event === 'approval_request') return { type: 'approval', requestId: ev.request_id, text: ev.prompt || JSON.stringify(ev.raw || {}), command: ev.command || ev.args?.command || '', description: ev.description || ev.args?.description || '', raw: ev.raw || {} }; if (ev.event === 'error' || ev.event === 'stderr') return { type: 'system', text: `${ev.event}: ${ev.content || ''}` }; return null }
+function normalizeEvent(ev) {
+  if (ev.event === 'state_change' || ev.event === 'response' || ev.event === 'message_start' || ev.event === 'message_end' || ev.event === 'message_update') return null
+  if (ev.event === 'history_source') return { type: 'history', text: ev.content || 'Loaded conversation history' }
+  if (ev.event === 'user_message') return { type: 'user', text: ev.content || '' }
+  if (ev.event === 'delta') return { type: 'assistant_delta', text: ev.content || '' }
+  if (ev.event === 'thinking_delta') return { type: 'thinking_delta', text: ev.content || '' }
+  if (ev.event === 'tool_delta') return { type: 'tool_delta', title: `tool: ${ev.tool || 'running'}`, text: ev.output || ev.content || '' }
+  if (ev.event === 'tool_start') return { type: 'tool', title: `tool: ${ev.tool || 'start'}`, text: JSON.stringify(ev.args || ev.raw || {}, null, 2) }
+  if (ev.event === 'tool_end') return { type: 'tool', title: `tool complete: ${ev.tool || ''}`, text: ev.output || JSON.stringify(ev.raw || {}, null, 2) }
+  if (ev.event === 'approval_request') return { type: 'approval', requestId: ev.request_id, text: ev.prompt || JSON.stringify(ev.raw || {}), command: ev.command || ev.args?.command || '', description: ev.description || ev.args?.description || '', raw: ev.raw || {} }
+  if (ev.event === 'stderr') return { type: 'system', text: formatAgentStatus(ev.content || '') }
+  if (ev.event === 'error') return { type: 'system', text: ev.content || 'Error' }
+  return null
+}
+function formatAgentStatus(text) {
+  const cleaned = String(text).replace(/^\s*[📦🗜️]\s*/u, '').trim()
+  if (/^Preflight compression:/i.test(cleaned)) return cleaned.replace(/>=\s*/, 'over ').replace(/threshold\.?$/i, 'threshold.')
+  if (/^Compacting context/i.test(cleaned)) return cleaned.replace(/\s+—\s+/, ': ')
+  return cleaned
+}
 render(<App />, document.getElementById('app'))
