@@ -22,15 +22,22 @@ type Server struct {
 	cfg      config.Config
 	store    core.SessionStore
 	frontend fs.FS
+	authn    *authManager
 	upgrader websocket.Upgrader
 }
 
 func New(cfg config.Config, store core.SessionStore, frontend fs.FS) *Server {
-	return &Server{cfg: cfg, store: store, frontend: frontend, upgrader: websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}}
+	return &Server{cfg: cfg, store: store, frontend: frontend, authn: newAuthManager(cfg), upgrader: websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}}
 }
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("/login", s.loginPage)
+	mux.HandleFunc("/auth/status", s.authStatus)
+	mux.HandleFunc("/auth/passkey/register/begin", s.passkeyRegisterBegin)
+	mux.HandleFunc("/auth/passkey/register/finish", s.passkeyRegisterFinish)
+	mux.HandleFunc("/auth/passkey/login/begin", s.passkeyLoginBegin)
+	mux.HandleFunc("/auth/passkey/login/finish", s.passkeyLoginFinish)
 	mux.HandleFunc("/api/health", s.auth(s.health))
 	mux.HandleFunc("/api/projects", s.auth(s.projects))
 	mux.HandleFunc("/api/browse", s.auth(s.browse))
@@ -39,7 +46,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/sessions/", s.auth(s.sessionByID))
 	mux.HandleFunc("/ws", s.auth(s.ws))
 	mux.HandleFunc("/ws/term/", s.auth(s.termWS))
-	mux.Handle("/", s.noCache(http.FileServer(http.FS(s.frontend))))
+	mux.Handle("/", s.noCache(s.uiAuth(http.FileServer(http.FS(s.frontend)))))
 	return mux
 }
 
@@ -52,22 +59,47 @@ func (s *Server) noCache(next http.Handler) http.Handler {
 	})
 }
 
+func (s *Server) tokenOK(r *http.Request) bool {
+	if s.cfg.Token == "" {
+		return false
+	}
+	tok := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	if tok == "" {
+		tok = r.URL.Query().Get("token")
+	}
+	return subtle.ConstantTimeCompare([]byte(tok), []byte(s.cfg.Token)) == 1
+}
+
+func (s *Server) hasAuth(r *http.Request) bool {
+	return s.tokenOK(r) || (s.authn != nil && s.authn.validSession(r))
+}
+
 func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if s.cfg.Token != "" {
-			tok := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-			if tok == "" {
-				tok = r.URL.Query().Get("token")
-			}
-			if subtle.ConstantTimeCompare([]byte(tok), []byte(s.cfg.Token)) != 1 {
+		if s.cfg.Token != "" || s.authn != nil {
+			if !s.hasAuth(r) {
 				log.Printf("http unauthorized %s %s remote=%s", r.Method, r.URL.Path, r.RemoteAddr)
-				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				http.Error(w, "AgentBridge locked: authenticate with a passkey at /login or provide a valid Bearer token / ?token=...", http.StatusUnauthorized)
 				return
 			}
 		}
 		log.Printf("http %s %s remote=%s", r.Method, r.URL.Path, r.RemoteAddr)
 		next(w, r)
 	}
+}
+
+func (s *Server) uiAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/login" || strings.HasPrefix(r.URL.Path, "/auth/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if (s.cfg.Token != "" || s.authn != nil) && !s.hasAuth(r) {
+			http.Redirect(w, r, "/login", http.StatusFound)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {

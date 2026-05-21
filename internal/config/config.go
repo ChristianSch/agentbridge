@@ -27,6 +27,11 @@ type Config struct {
 		IdleTimeout time.Duration `yaml:"idle_timeout"`
 		MaxSessions int           `yaml:"max_sessions"`
 	} `yaml:"terminal"`
+	Auth struct {
+		Passkeys bool     `yaml:"passkeys"`
+		RPID     string   `yaml:"rp_id"`
+		Origins  []string `yaml:"origins"`
+	} `yaml:"auth"`
 	Projects      []Project `yaml:"projects"`
 	Notifications struct {
 		Backend    string   `yaml:"backend"`

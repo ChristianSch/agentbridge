@@ -55,9 +55,18 @@ Recommended setup:
    tailscale serve status
    ```
    Then open the Tailscale Serve URL from devices in your tailnet and pass the token as `?token=...` once.
-4. Do not enable Tailscale Funnel for AgentBridge. Funnel makes it internet-facing.
+4. Optional, enable passkeys for Face ID / Touch ID / security keys:
+   ```yaml
+   auth:
+     passkeys: true
+     rp_id: "sam-1.example.ts.net"
+     origins:
+       - "https://sam-1.example.ts.net"
+   ```
+   Open `/login` with your bootstrap token once, register a passkey, then normal browser sessions unlock with Face ID or a security key. WebAuthn requires HTTPS, so use the HTTPS Tailscale Serve URL.
+5. Do not enable Tailscale Funnel for AgentBridge. Funnel makes it internet-facing.
 
-AgentBridge logs a security warning if token auth is disabled, if a development token is used, or if it is bound to a non-loopback address.
+AgentBridge logs a security warning if token auth is disabled, if a development token is used, or if it is bound to a non-loopback address. API requests without valid auth return a clear locked message, and the main UI redirects to `/login` instead of loading unauthenticated.
 
 ## Current status
 

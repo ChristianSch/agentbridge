@@ -16,6 +16,12 @@ terminal:
   idle_timeout: "60m"
   max_sessions: 10
 
+auth:
+  passkeys: false
+  rp_id: "sam-1.example.ts.net" # host only, no scheme
+  origins:
+    - "https://sam-1.example.ts.net"
+
 notifications:
   backend: "" # "ntfy" to enable
   ntfy_topic: "agentbridge"

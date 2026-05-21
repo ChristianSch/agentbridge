@@ -1,0 +1,27 @@
+package httpadapter
+
+import "net/http"
+
+const loginHTML = `<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Unlock AgentBridge</title>
+<style>body{margin:0;min-height:100dvh;display:grid;place-items:center;background:#141414;color:#d7c7a1;font:15px ui-monospace,SFMono-Regular,Menlo,monospace}.box{width:min(520px,calc(100vw - 32px));border:1px solid #4b4638;background:#151515;padding:18px;box-shadow:0 20px 80px #050505aa}h1{margin:0 0 8px;font-size:20px}p{color:#9f926f}.row{display:flex;gap:8px;flex-wrap:wrap}button{min-height:40px;border:1px solid #6f684f;background:#25251f;color:#d7c7a1;font:inherit;font-weight:800;padding:0 13px}button.primary{background:#12324a;border-color:#00afff;color:#f0e4bd}input{min-height:40px;border:1px solid #4b4638;background:#0c0c0c;color:#d7c7a1;padding:0 10px;font:inherit;flex:1}.err{color:#ffb0a0;white-space:pre-wrap}</style></head>
+<body><main class="box"><h1>Unlock AgentBridge</h1><p id="status">Checking authentication…</p><div class="row"><button id="login" class="primary">Use Face ID / security key</button><button id="register">Register passkey</button></div><p>Bootstrap token</p><div class="row"><input id="token" placeholder="AGENTBRIDGE_TOKEN"><button id="tokenBtn">Use token</button></div><p class="err" id="err"></p></main>
+<script>
+const $=id=>document.getElementById(id); const enc=new TextEncoder();
+function b64uToBuf(s){s=s.replace(/-/g,'+').replace(/_/g,'/'); while(s.length%4)s+='='; return Uint8Array.from(atob(s),c=>c.charCodeAt(0)).buffer}
+function bufToB64u(b){return btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'')}
+function prepCreate(o){o.publicKey.challenge=b64uToBuf(o.publicKey.challenge); o.publicKey.user.id=b64uToBuf(o.publicKey.user.id); if(o.publicKey.excludeCredentials) for(const c of o.publicKey.excludeCredentials)c.id=b64uToBuf(c.id); return o}
+function prepGet(o){o.publicKey.challenge=b64uToBuf(o.publicKey.challenge); if(o.publicKey.allowCredentials) for(const c of o.publicKey.allowCredentials)c.id=b64uToBuf(c.id); return o}
+function credJSON(c){let r={id:c.id,rawId:bufToB64u(c.rawId),type:c.type,response:{clientDataJSON:bufToB64u(c.response.clientDataJSON)}}; if(c.response.attestationObject)r.response.attestationObject=bufToB64u(c.response.attestationObject); if(c.response.authenticatorData)r.response.authenticatorData=bufToB64u(c.response.authenticatorData); if(c.response.signature)r.response.signature=bufToB64u(c.response.signature); if(c.response.userHandle)r.response.userHandle=bufToB64u(c.response.userHandle); return r}
+async function api(p,opt={}){const token=localStorage.agentbridgeToken||$('token').value; opt.headers={...(opt.headers||{}),...(token?{Authorization:'Bearer '+token}:{})}; const res=await fetch(p,opt); if(!res.ok)throw new Error(await res.text()); return res.json()}
+async function status(){try{const s=await api('/auth/status'); $('status').textContent=s.authenticated?'Unlocked. Redirecting…':(s.registered?'Passkey required.':'No passkey registered yet. Register with your bootstrap token.'); if(s.authenticated) location.href='/';}catch(e){$('status').textContent='Locked.'}}
+async function login(){try{$('err').textContent=''; const o=prepGet(await api('/auth/passkey/login/begin',{method:'POST'})); const c=await navigator.credentials.get(o); await api('/auth/passkey/login/finish',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(credJSON(c))}); location.href='/'}catch(e){$('err').textContent=e.message}}
+async function register(){try{$('err').textContent=''; const o=prepCreate(await api('/auth/passkey/register/begin',{method:'POST'})); const c=await navigator.credentials.create(o); await api('/auth/passkey/register/finish',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(credJSON(c))}); location.href='/'}catch(e){$('err').textContent=e.message}}
+$('login').onclick=login; $('register').onclick=register; $('tokenBtn').onclick=()=>{localStorage.agentbridgeToken=$('token').value; location.href='/?token='+encodeURIComponent($('token').value)}; status();
+</script></body></html>`
+
+func (s *Server) loginPage(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(loginHTML))
+}
