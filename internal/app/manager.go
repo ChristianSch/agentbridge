@@ -360,6 +360,22 @@ func (m *Manager) Rename(id, name string) (core.Session, error) {
 	return sess, nil
 }
 
+func (m *Manager) ClaimSessions(ownerID string) error {
+	ownerID = strings.TrimSpace(ownerID)
+	if ownerID == "" {
+		return errors.New("owner id is required")
+	}
+	m.mu.Lock()
+	for _, p := range m.sessions {
+		if p.OwnerID == "" || p.OwnerID == "token" || p.OwnerID == "bootstrap" {
+			p.OwnerID = ownerID
+		}
+	}
+	m.mu.Unlock()
+	m.schedulePersist()
+	return nil
+}
+
 func (m *Manager) Kill(id string) error {
 	return m.stopSession(id, true)
 }

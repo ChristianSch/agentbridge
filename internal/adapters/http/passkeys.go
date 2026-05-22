@@ -205,10 +205,14 @@ func (s *Server) passkeyRegisterFinish(w http.ResponseWriter, r *http.Request) {
 	a.mu.Lock()
 	a.user.Credentials = append(a.user.Credentials, *cred)
 	err = a.save()
+	ownerID := a.ownerID()
 	a.mu.Unlock()
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
+	}
+	if err := s.store.ClaimSessions(ownerID); err != nil {
+		log.Printf("claim sessions after passkey registration failed: %v", err)
 	}
 	a.setSession(w, r)
 	writeJSON(w, map[string]any{"ok": true})

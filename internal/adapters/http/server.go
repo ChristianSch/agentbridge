@@ -139,6 +139,7 @@ func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 func (s *Server) uiAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/login" || strings.HasPrefix(r.URL.Path, "/auth/") || isPublicAsset(r.URL.Path) {
+			s.persistTokenCookie(w, r)
 			next.ServeHTTP(w, r)
 			return
 		}

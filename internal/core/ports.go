@@ -76,6 +76,7 @@ type SessionStore interface {
 	List() []Session
 	Get(id string) (Session, bool)
 	Rename(id, name string) (Session, error)
+	ClaimSessions(ownerID string) error
 	Kill(id string) error
 	Send(cmd ClientCommand) error
 	Subscribe(sessionID string) (<-chan AgentEvent, func(), error)
