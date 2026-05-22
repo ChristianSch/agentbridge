@@ -138,7 +138,7 @@ func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 
 func (s *Server) uiAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/login" || strings.HasPrefix(r.URL.Path, "/auth/") {
+		if r.URL.Path == "/login" || strings.HasPrefix(r.URL.Path, "/auth/") || isPublicAsset(r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -149,6 +149,15 @@ func (s *Server) uiAuth(next http.Handler) http.Handler {
 		s.persistTokenCookie(w, r)
 		next.ServeHTTP(w, r.WithContext(core.WithOwnerID(r.Context(), s.ownerID(r))))
 	})
+}
+
+func isPublicAsset(path string) bool {
+	switch path {
+	case "/app.js", "/app.css", "/favicon.ico":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
