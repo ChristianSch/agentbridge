@@ -172,8 +172,13 @@ func (s *Server) tokenLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid AgentBridge token", http.StatusUnauthorized)
 		return
 	}
+	if s.authn == nil {
+		http.SetCookie(w, &http.Cookie{Name: "ab_token", Value: s.cfg.Token, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: isHTTPS(r), MaxAge: 86400})
+		writeJSON(w, map[string]any{"ok": true, "passkeys": false, "registered": false, "authenticated": true})
+		return
+	}
 	http.SetCookie(w, &http.Cookie{Name: "ab_token", Value: "", Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: isHTTPS(r), MaxAge: -1})
-	writeJSON(w, map[string]any{"ok": true, "passkeys": s.authn != nil, "registered": s.authn != nil && s.authn.hasCredential(), "authenticated": false})
+	writeJSON(w, map[string]any{"ok": true, "passkeys": true, "registered": s.authn.hasCredential(), "authenticated": false})
 }
 
 func (s *Server) passkeyRegisterBegin(w http.ResponseWriter, r *http.Request) {
