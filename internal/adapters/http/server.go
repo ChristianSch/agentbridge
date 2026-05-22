@@ -42,6 +42,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/login", s.loginPage)
 	mux.HandleFunc("/auth/status", s.authStatus)
+	mux.HandleFunc("/auth/token", s.tokenLogin)
 	mux.HandleFunc("/auth/passkey/register/begin", s.passkeyRegisterBegin)
 	mux.HandleFunc("/auth/passkey/register/finish", s.passkeyRegisterFinish)
 	mux.HandleFunc("/auth/passkey/login/begin", s.passkeyLoginBegin)

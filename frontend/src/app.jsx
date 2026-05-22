@@ -6,10 +6,10 @@ import snarkdown from 'snarkdown'
 import 'xterm/css/xterm.css'
 import './style.css'
 
-const token = new URLSearchParams(location.search).get('token') || localStorage.agentbridgeToken || ''
-if (token) localStorage.agentbridgeToken = token
+localStorage.removeItem('agentbridgeToken')
+const token = ''
 
-function authHeaders(extra = {}) { return { ...extra, ...(token ? { Authorization: `Bearer ${token}` } : {}) } }
+function authHeaders(extra = {}) { return { ...extra } }
 async function api(path, opts = {}) { const res = await fetch(path, { ...opts, headers: authHeaders(opts.headers) }); if (!res.ok) throw new Error(await res.text()); return res.status === 204 ? null : res.json() }
 function sortSessions(list) { return [...list].sort((a, b) => new Date(b.last_active || b.created_at) - new Date(a.last_active || a.created_at)) }
 

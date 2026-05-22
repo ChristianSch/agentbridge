@@ -156,6 +156,26 @@ func (s *Server) authStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"passkeys": s.authn != nil, "registered": s.authn != nil && s.authn.hasCredential(), "authenticated": s.hasAuth(r)})
 }
 
+func (s *Server) tokenLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Token string `json:"token"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	if req.Token != "" {
+		r.Header.Set("Authorization", "Bearer "+req.Token)
+	}
+	if !s.requestTokenOK(r) {
+		http.Error(w, "invalid AgentBridge token", http.StatusUnauthorized)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{Name: "ab_token", Value: s.cfg.Token, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: isHTTPS(r), MaxAge: 86400})
+	writeJSON(w, map[string]any{"ok": true})
+}
+
 func (s *Server) passkeyRegisterBegin(w http.ResponseWriter, r *http.Request) {
 	if s.authn == nil {
 		http.Error(w, "passkeys are not enabled", 404)
