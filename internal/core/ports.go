@@ -1,15 +1,18 @@
 package core
 
-import "context"
+import (
+	"context"
+	"io"
+)
 
 // AgentAdapter is the protocol port implemented by Pi, Hermes, and future agents.
 type AgentAdapter interface {
 	Kind() AgentKind
 	BuildCommand(cfg AgentConfig) (name string, args []string, env []string, err error)
-	SendPrompt(text string) ([]byte, error)
-	SendSteer(text string) ([]byte, error)
+	SendPrompt(payload PromptPayload) ([]byte, error)
+	SendSteer(payload PromptPayload) ([]byte, error)
 	SendAbort() ([]byte, error)
-	SendFollowUp(text string) ([]byte, error)
+	SendFollowUp(payload PromptPayload) ([]byte, error)
 	SendCompact() ([]byte, error)
 	SendApproval(id string, approved bool) ([]byte, error)
 	InitialMessages(cfg AgentConfig) ([][]byte, error)
@@ -29,6 +32,31 @@ type AgentConfig struct {
 
 type EventSink interface {
 	Publish(event AgentEvent)
+}
+
+type AttachmentMeta struct {
+	SessionID string
+	FileName  string
+	MimeType  string
+	Size      int64
+}
+
+type AttachmentStore interface {
+	Save(ctx context.Context, r io.Reader, meta AttachmentMeta) (Attachment, error)
+	Get(ctx context.Context, id string) (Attachment, error)
+	Open(ctx context.Context, id string) (io.ReadCloser, error)
+	Delete(ctx context.Context, id string) error
+}
+
+type Transcript struct {
+	Text     string  `json:"text"`
+	Engine   string  `json:"engine"`
+	Language string  `json:"language,omitempty"`
+	Duration float64 `json:"duration,omitempty"`
+}
+
+type Transcriber interface {
+	Transcribe(ctx context.Context, audio Attachment) (Transcript, error)
 }
 
 type ActivitySummarizer interface {

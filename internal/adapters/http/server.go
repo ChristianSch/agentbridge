@@ -1,10 +1,14 @@
 package httpadapter
 
 import (
+	"context"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/json"
+	"io"
 	"io/fs"
 	"log"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -19,15 +23,19 @@ import (
 )
 
 type Server struct {
-	cfg      config.Config
-	store    core.SessionStore
-	frontend fs.FS
-	authn    *authManager
-	upgrader websocket.Upgrader
+	cfg         config.Config
+	store       core.SessionStore
+	attachments core.AttachmentStore
+	transcriber core.Transcriber
+	frontend    fs.FS
+	authn       *authManager
+	upgrader    websocket.Upgrader
 }
 
-func New(cfg config.Config, store core.SessionStore, frontend fs.FS) *Server {
-	return &Server{cfg: cfg, store: store, frontend: frontend, authn: newAuthManager(cfg), upgrader: websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}}
+func New(cfg config.Config, store core.SessionStore, frontend fs.FS, attachments core.AttachmentStore, transcriber core.Transcriber) *Server {
+	_ = mime.AddExtensionType(".css", "text/css; charset=utf-8")
+	_ = mime.AddExtensionType(".js", "application/javascript; charset=utf-8")
+	return &Server{cfg: cfg, store: store, attachments: attachments, transcriber: transcriber, frontend: frontend, authn: newAuthManager(cfg), upgrader: websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -44,6 +52,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/detect", s.auth(s.detect))
 	mux.HandleFunc("/api/sessions", s.auth(s.sessions))
 	mux.HandleFunc("/api/sessions/", s.auth(s.sessionByID))
+	mux.HandleFunc("/api/attachments", s.auth(s.uploadAttachment))
+	mux.HandleFunc("/api/attachments/", s.auth(s.attachmentByID))
+	mux.HandleFunc("/api/transcribe", s.auth(s.transcribe))
 	mux.HandleFunc("/ws", s.auth(s.ws))
 	mux.HandleFunc("/ws/term/", s.auth(s.termWS))
 	mux.Handle("/", s.noCache(s.uiAuth(http.FileServer(http.FS(s.frontend)))))
@@ -60,6 +71,10 @@ func (s *Server) noCache(next http.Handler) http.Handler {
 }
 
 func (s *Server) tokenOK(r *http.Request) bool {
+	return s.requestTokenOK(r) || s.cookieTokenOK(r)
+}
+
+func (s *Server) requestTokenOK(r *http.Request) bool {
 	if s.cfg.Token == "" {
 		return false
 	}
@@ -68,6 +83,24 @@ func (s *Server) tokenOK(r *http.Request) bool {
 		tok = r.URL.Query().Get("token")
 	}
 	return subtle.ConstantTimeCompare([]byte(tok), []byte(s.cfg.Token)) == 1
+}
+
+func (s *Server) cookieTokenOK(r *http.Request) bool {
+	if s.cfg.Token == "" {
+		return false
+	}
+	c, err := r.Cookie("ab_token")
+	if err != nil || c.Value == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(c.Value), []byte(s.cfg.Token)) == 1
+}
+
+func (s *Server) persistTokenCookie(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.Token == "" || r.URL.Query().Get("token") == "" || !s.requestTokenOK(r) {
+		return
+	}
+	http.SetCookie(w, &http.Cookie{Name: "ab_token", Value: s.cfg.Token, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: isHTTPS(r), MaxAge: 86400})
 }
 
 func (s *Server) hasAuth(r *http.Request) bool {
@@ -97,6 +130,7 @@ func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 				return
 			}
 		}
+		s.persistTokenCookie(w, r)
 		log.Printf("http %s %s remote=%s", r.Method, r.URL.Path, r.RemoteAddr)
 		next(w, r.WithContext(core.WithOwnerID(r.Context(), s.ownerID(r))))
 	}
@@ -112,6 +146,7 @@ func (s *Server) uiAuth(next http.Handler) http.Handler {
 			http.Redirect(w, r, "/login", http.StatusFound)
 			return
 		}
+		s.persistTokenCookie(w, r)
 		next.ServeHTTP(w, r.WithContext(core.WithOwnerID(r.Context(), s.ownerID(r))))
 	})
 }
@@ -294,6 +329,119 @@ func (s *Server) sessionByID(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Server) uploadAttachment(w http.ResponseWriter, r *http.Request) {
+	if !s.cfg.Attachments.Enabled || s.attachments == nil {
+		http.Error(w, "attachments disabled", http.StatusNotFound)
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if max := int64(s.cfg.Attachments.MaxSize); max > 0 {
+		r.Body = http.MaxBytesReader(w, r.Body, max+1024*1024)
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+	att, err := s.attachments.Save(r.Context(), file, core.AttachmentMeta{SessionID: r.FormValue("session_id"), FileName: header.Filename, MimeType: header.Header.Get("Content-Type"), Size: header.Size})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	att.Path = ""
+	writeJSON(w, att)
+}
+
+func (s *Server) attachmentByID(w http.ResponseWriter, r *http.Request) {
+	if s.attachments == nil {
+		http.Error(w, "attachments disabled", http.StatusNotFound)
+		return
+	}
+	id := strings.TrimPrefix(r.URL.Path, "/api/attachments/")
+	switch r.Method {
+	case http.MethodGet:
+		att, err := s.attachments.Get(r.Context(), id)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		att.Path = ""
+		writeJSON(w, att)
+	case http.MethodDelete:
+		_ = s.attachments.Delete(r.Context(), id)
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) transcribe(w http.ResponseWriter, r *http.Request) {
+	if !s.cfg.Voice.Enabled || s.transcriber == nil || s.attachments == nil {
+		http.Error(w, "voice transcription disabled", http.StatusNotFound)
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if max := int64(s.cfg.Attachments.MaxSize); max > 0 {
+		r.Body = http.MaxBytesReader(w, r.Body, max+1024*1024)
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+	att, err := s.attachments.Save(r.Context(), file, core.AttachmentMeta{SessionID: r.FormValue("session_id"), FileName: header.Filename, MimeType: header.Header.Get("Content-Type"), Size: header.Size})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	tr, err := s.transcriber.Transcribe(r.Context(), att)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	att.ExtractedText = tr.Text
+	att.Path = ""
+	writeJSON(w, map[string]any{"text": tr.Text, "attachment": att, "transcript": tr})
+}
+
+func (s *Server) resolveAttachments(ctx context.Context, ids []string) ([]core.Attachment, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	if s.attachments == nil {
+		return nil, nil
+	}
+	out := []core.Attachment{}
+	for _, id := range ids {
+		att, err := s.attachments.Get(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if att.Kind == core.AttachmentImage {
+			rc, err := s.attachments.Open(ctx, id)
+			if err != nil {
+				return nil, err
+			}
+			b, err := io.ReadAll(rc)
+			_ = rc.Close()
+			if err != nil {
+				return nil, err
+			}
+			att.Content = base64.StdEncoding.EncodeToString(b)
+		}
+		out = append(out, att)
+	}
+	return out, nil
+}
+
 func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 	log.Printf("ws agent connect remote=%s", r.RemoteAddr)
 	c, err := s.upgrader.Upgrade(w, r, nil)
@@ -359,7 +507,15 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 			write(map[string]any{"event": "error", "content": "session not found"})
 			continue
 		}
-		log.Printf("ws command action=%s session=%s text_len=%d", cmd.Action, cmd.SessionID, len(cmd.Text))
+		if len(cmd.AttachmentIDs) > 0 {
+			atts, err := s.resolveAttachments(r.Context(), cmd.AttachmentIDs)
+			if err != nil {
+				write(map[string]any{"event": "error", "content": err.Error()})
+				continue
+			}
+			cmd.Attachments = atts
+		}
+		log.Printf("ws command action=%s session=%s text_len=%d attachments=%d", cmd.Action, cmd.SessionID, len(cmd.Text), len(cmd.Attachments))
 		if err := s.store.Send(cmd); err != nil {
 			write(map[string]any{"event": "error", "content": err.Error()})
 		}

@@ -4,11 +4,14 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/ChristianSch/agentbridge/internal/adapters/agent"
 	httpadapter "github.com/ChristianSch/agentbridge/internal/adapters/http"
 	"github.com/ChristianSch/agentbridge/internal/adapters/llm"
+	"github.com/ChristianSch/agentbridge/internal/adapters/storage"
+	"github.com/ChristianSch/agentbridge/internal/adapters/transcribe"
 	"github.com/ChristianSch/agentbridge/internal/app"
 	"github.com/ChristianSch/agentbridge/internal/config"
 	"github.com/ChristianSch/agentbridge/internal/static"
@@ -20,11 +23,24 @@ func main() {
 		log.Fatal(err)
 	}
 	warnSecurity(cfg.Bind, cfg.Token)
+	if ext, err := agent.EnsurePiAttachmentExtension(""); err == nil {
+		log.Printf("pi attachment extension: %s", ext)
+		_ = setenv(agent.PiAttachmentExtensionEnv, ext)
+	} else {
+		log.Printf("pi attachment extension disabled: %v", err)
+	}
 	mgr := app.NewManager(cfg, llm.NewActivitySummarizer(cfg.ActivitySummary), agent.NewPiAdapter(), agent.NewHermesAdapter())
-	srv := httpadapter.New(cfg, mgr, static.FS())
+	attachments, err := storage.NewLocalAttachmentStore("", int64(cfg.Attachments.MaxSize), cfg.Attachments.AllowedMimeTypes)
+	if err != nil {
+		log.Fatal(err)
+	}
+	var transcriber = transcribe.WhisperCPP{Binary: cfg.Voice.Binary, Model: cfg.Voice.Model, Language: cfg.Voice.Language, Threads: cfg.Voice.Threads, Timeout: cfg.Voice.Timeout}
+	srv := httpadapter.New(cfg, mgr, static.FS(), attachments, transcriber)
 	log.Printf("agentbridge listening on %s", cfg.Bind)
 	log.Fatal(http.ListenAndServe(cfg.Bind, srv.Handler()))
 }
+
+func setenv(key, value string) error { return os.Setenv(key, value) }
 
 func warnSecurity(bind, token string) {
 	if token == "" {

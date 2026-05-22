@@ -49,19 +49,22 @@ func (*HermesAdapter) BuildCommand(cfg core.AgentConfig) (string, []string, []st
 			break
 		}
 	}
+	env = append(env, "AGENTBRIDGE_HERMES=1")
 	return python, []string{"-m", module}, env, nil
 }
 
-func (h *HermesAdapter) SendPrompt(text string) ([]byte, error) {
-	return h.req("prompt.submit", map[string]any{"text": text})
+func (h *HermesAdapter) SendPrompt(payload core.PromptPayload) ([]byte, error) {
+	return h.req("prompt.submit", hermesPromptParams(payload))
 }
-func (h *HermesAdapter) SendSteer(text string) ([]byte, error) {
-	return h.req("session.steer", map[string]any{"text": text})
+func (h *HermesAdapter) SendSteer(payload core.PromptPayload) ([]byte, error) {
+	return h.req("session.steer", hermesPromptParams(payload))
 }
 func (h *HermesAdapter) SendAbort() ([]byte, error) {
 	return h.req("session.interrupt", map[string]any{})
 }
-func (h *HermesAdapter) SendFollowUp(text string) ([]byte, error) { return h.SendPrompt(text) }
+func (h *HermesAdapter) SendFollowUp(payload core.PromptPayload) ([]byte, error) {
+	return h.SendPrompt(payload)
+}
 func (h *HermesAdapter) SendCompact() ([]byte, error) {
 	return h.req("session.compress", map[string]any{})
 }
@@ -71,6 +74,32 @@ func (h *HermesAdapter) SendApproval(_ string, approved bool) ([]byte, error) {
 		choice = "allow"
 	}
 	return h.req("approval.respond", map[string]any{"choice": choice})
+}
+
+func hermesPromptParams(payload core.PromptPayload) map[string]any {
+	params := map[string]any{"text": appendAttachmentText(payload.Text, payload.Attachments)}
+	if attachments := hermesAttachments(payload.Attachments); len(attachments) > 0 {
+		params["attachments"] = attachments
+	}
+	return params
+}
+
+func hermesAttachments(attachments []core.Attachment) []map[string]any {
+	if len(attachments) == 0 {
+		return nil
+	}
+	out := []map[string]any{}
+	for _, att := range attachments {
+		item := map[string]any{"id": att.ID, "type": att.Kind, "file_name": att.FileName, "mime_type": att.MimeType, "size": att.Size}
+		if att.Content != "" {
+			item["content"] = att.Content
+		}
+		if att.ExtractedText != "" {
+			item["extracted_text"] = att.ExtractedText
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 func (h *HermesAdapter) req(method string, params any) ([]byte, error) {

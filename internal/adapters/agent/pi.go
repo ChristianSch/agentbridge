@@ -3,6 +3,8 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"strings"
 	"sync/atomic"
 
 	"github.com/ChristianSch/agentbridge/internal/core"
@@ -22,23 +24,26 @@ func (PiAdapter) BuildCommand(cfg core.AgentConfig) (string, []string, []string,
 	// Pi uses the process working directory. Current pi releases do not expose
 	// a --cwd flag, so AgentBridge sets cmd.Dir in the process manager.
 	args := []string{"--mode", "rpc"}
+	if ext := os.Getenv(PiAttachmentExtensionEnv); ext != "" {
+		args = append(args, "--extension", ext)
+	}
 	if cfg.PiResumeID != "" {
 		args = append(args, "--session", cfg.PiResumeID)
 	}
 	return bin, args, nil, nil
 }
 
-func (PiAdapter) SendPrompt(text string) ([]byte, error) {
-	return line(map[string]any{"id": newReqID(), "type": "prompt", "message": text})
+func (PiAdapter) SendPrompt(payload core.PromptPayload) ([]byte, error) {
+	return piPromptLine("prompt", payload)
 }
-func (PiAdapter) SendSteer(text string) ([]byte, error) {
-	return line(map[string]any{"id": newReqID(), "type": "steer", "message": text})
+func (PiAdapter) SendSteer(payload core.PromptPayload) ([]byte, error) {
+	return piPromptLine("steer", payload)
 }
 func (PiAdapter) SendAbort() ([]byte, error) {
 	return line(map[string]any{"id": newReqID(), "type": "abort"})
 }
-func (PiAdapter) SendFollowUp(text string) ([]byte, error) {
-	return line(map[string]any{"id": newReqID(), "type": "follow_up", "message": text})
+func (PiAdapter) SendFollowUp(payload core.PromptPayload) ([]byte, error) {
+	return piPromptLine("follow_up", payload)
 }
 func (PiAdapter) SendCompact() ([]byte, error) {
 	return line(map[string]any{"id": newReqID(), "type": "compact"})
@@ -128,6 +133,42 @@ func parseExtensionUI(m map[string]any) *core.AgentEvent {
 		prompt = str(m["title"])
 	}
 	return &core.AgentEvent{Event: "approval_request", RequestID: str(m["id"]), Prompt: prompt, Raw: m}
+}
+
+func piPromptLine(typ string, payload core.PromptPayload) ([]byte, error) {
+	msg := map[string]any{"id": newReqID(), "type": typ, "message": appendAttachmentText(payload.Text, payload.Attachments)}
+	images := []map[string]string{}
+	for _, att := range payload.Attachments {
+		if att.Kind == core.AttachmentImage && att.Content != "" {
+			images = append(images, map[string]string{"type": "image", "data": att.Content, "mimeType": att.MimeType})
+		}
+	}
+	if len(images) > 0 {
+		msg["images"] = images
+	}
+	return line(msg)
+}
+
+func appendAttachmentText(text string, attachments []core.Attachment) string {
+	parts := []string{}
+	for _, att := range attachments {
+		location := ""
+		if att.Path != "" {
+			location = fmt.Sprintf("\nAvailable local copy: %s\nUse this path directly; do not search the filesystem for the upload.", att.Path)
+		}
+		if att.ExtractedText != "" {
+			parts = append(parts, fmt.Sprintf("Attached file: %s (%s, %d bytes)%s\nExtracted text:\n%s", att.FileName, att.MimeType, att.Size, location, att.ExtractedText))
+		} else if att.Kind != core.AttachmentImage || att.Content == "" {
+			parts = append(parts, fmt.Sprintf("Attached file: %s (%s, %d bytes)%s", att.FileName, att.MimeType, att.Size, location))
+		}
+	}
+	if len(parts) == 0 {
+		return text
+	}
+	if strings.TrimSpace(text) == "" {
+		return strings.Join(parts, "\n\n")
+	}
+	return text + "\n\n" + strings.Join(parts, "\n\n")
 }
 
 func line(v any) ([]byte, error) {

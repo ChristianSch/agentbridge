@@ -39,10 +39,37 @@ type ActivityFact struct {
 	Text  string         `json:"text,omitempty"`
 }
 
+type AttachmentKind string
+
+const (
+	AttachmentImage AttachmentKind = "image"
+	AttachmentAudio AttachmentKind = "audio"
+	AttachmentFile  AttachmentKind = "file"
+	AttachmentText  AttachmentKind = "text"
+)
+
+type Attachment struct {
+	ID            string         `json:"id"`
+	Kind          AttachmentKind `json:"kind"`
+	FileName      string         `json:"file_name"`
+	MimeType      string         `json:"mime_type"`
+	Size          int64          `json:"size"`
+	Path          string         `json:"path,omitempty"`
+	Content       string         `json:"content,omitempty"`
+	ExtractedText string         `json:"extracted_text,omitempty"`
+	Preview       string         `json:"preview,omitempty"`
+}
+
+type PromptPayload struct {
+	Text        string       `json:"text"`
+	Attachments []Attachment `json:"attachments,omitempty"`
+}
+
 type AgentEvent struct {
 	Event       string         `json:"event"`
 	SessionID   string         `json:"session_id,omitempty"`
 	Content     string         `json:"content,omitempty"`
+	Attachments []Attachment   `json:"attachments,omitempty"`
 	Tool        string         `json:"tool,omitempty"`
 	Args        map[string]any `json:"args,omitempty"`
 	Output      string         `json:"output,omitempty"`
@@ -55,9 +82,11 @@ type AgentEvent struct {
 }
 
 type ClientCommand struct {
-	Action    string `json:"action"`
-	SessionID string `json:"session_id"`
-	Text      string `json:"text,omitempty"`
-	RequestID string `json:"request_id,omitempty"`
-	Approved  bool   `json:"approved,omitempty"`
+	Action        string       `json:"action"`
+	SessionID     string       `json:"session_id"`
+	Text          string       `json:"text,omitempty"`
+	AttachmentIDs []string     `json:"attachment_ids,omitempty"`
+	Attachments   []Attachment `json:"attachments,omitempty"`
+	RequestID     string       `json:"request_id,omitempty"`
+	Approved      bool         `json:"approved,omitempty"`
 }

@@ -87,7 +87,9 @@ Implemented:
 - Separate stderr event capture
 - ntfy notification hook for waiting/approval events
 - Activity summaries for hidden thinking/tool activity, with deterministic fallback or a cheap OpenAI/Anthropic model via `activity_summary`
-- Preact/xterm frontend with session sidebar, agent chat, terminal panes, and approval buttons
+- Attachment uploads with image support for Pi RPC, an `attachment_read` Pi tool, a Hermes `read_attachment` tool, and attachment/text fallback
+- Local voice transcription via whisper.cpp-compatible `whisper-cli`
+- Preact/xterm frontend with session sidebar, agent chat, terminal panes, attachment chips, voice recording, and approval buttons
 
 ## Useful API
 
