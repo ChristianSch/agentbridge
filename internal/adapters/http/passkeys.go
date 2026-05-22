@@ -173,7 +173,7 @@ func (s *Server) tokenLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.SetCookie(w, &http.Cookie{Name: "ab_token", Value: s.cfg.Token, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: isHTTPS(r), MaxAge: 86400})
-	writeJSON(w, map[string]any{"ok": true})
+	writeJSON(w, map[string]any{"ok": true, "passkeys": s.authn != nil, "registered": s.authn != nil && s.authn.hasCredential(), "authenticated": true})
 }
 
 func (s *Server) passkeyRegisterBegin(w http.ResponseWriter, r *http.Request) {

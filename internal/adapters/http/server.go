@@ -104,6 +104,21 @@ func (s *Server) persistTokenCookie(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{Name: "ab_token", Value: s.cfg.Token, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: isHTTPS(r), MaxAge: 86400})
 }
 
+func (s *Server) stripTokenRedirect(w http.ResponseWriter, r *http.Request) bool {
+	if r.URL.Query().Get("token") == "" || !s.requestTokenOK(r) {
+		return false
+	}
+	s.persistTokenCookie(w, r)
+	q := r.URL.Query()
+	q.Del("token")
+	target := r.URL.Path
+	if encoded := q.Encode(); encoded != "" {
+		target += "?" + encoded
+	}
+	http.Redirect(w, r, target, http.StatusFound)
+	return true
+}
+
 func (s *Server) hasAuth(r *http.Request) bool {
 	return s.tokenOK(r) || (s.authn != nil && s.authn.validSession(r))
 }
@@ -139,8 +154,14 @@ func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 
 func (s *Server) uiAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/login" || strings.HasPrefix(r.URL.Path, "/auth/") || isPublicAsset(r.URL.Path) {
-			s.persistTokenCookie(w, r)
+		if strings.HasPrefix(r.URL.Path, "/auth/") || isPublicAsset(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if s.stripTokenRedirect(w, r) {
+			return
+		}
+		if r.URL.Path == "/login" {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -148,7 +169,6 @@ func (s *Server) uiAuth(next http.Handler) http.Handler {
 			http.Redirect(w, r, "/login", http.StatusFound)
 			return
 		}
-		s.persistTokenCookie(w, r)
 		next.ServeHTTP(w, r.WithContext(core.WithOwnerID(r.Context(), s.ownerID(r))))
 	})
 }
