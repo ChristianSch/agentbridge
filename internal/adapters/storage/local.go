@@ -60,8 +60,8 @@ func (s *LocalAttachmentStore) Save(ctx context.Context, r io.Reader, meta core.
 	if mimeType == "" || mimeType == "application/octet-stream" {
 		mimeType = detectedMime
 	}
-	if mimeType == "application/pdf" && detectedMime != "application/pdf" {
-		return core.Attachment{}, fmt.Errorf("uploaded file is not a PDF")
+	if !mimeCompatible(mimeType, detectedMime) {
+		return core.Attachment{}, fmt.Errorf("uploaded file type %q does not match detected type %q", mimeType, detectedMime)
 	}
 	if len(s.allowed) > 0 && !s.allowed[mimeType] {
 		return core.Attachment{}, fmt.Errorf("unsupported attachment type %q", mimeType)
@@ -174,6 +174,28 @@ func extractPDFText(path string) string {
 		text = text[:max] + "\n\n[truncated]"
 	}
 	return text
+}
+
+func mimeCompatible(claimed, detected string) bool {
+	if claimed == "" || detected == "" {
+		return false
+	}
+	if claimed == detected {
+		return true
+	}
+	claimedMain := strings.SplitN(claimed, "/", 2)[0]
+	detectedMain := strings.SplitN(detected, "/", 2)[0]
+	switch claimedMain {
+	case "image":
+		return detectedMain == "image"
+	case "text":
+		return detectedMain == "text"
+	case "audio":
+		// Browser recordings and some audio containers are commonly sniffed as
+		// video/* or application/octet-stream by net/http's small magic table.
+		return detectedMain == "audio" || detected == "video/webm" || detected == "video/ogg" || detected == "application/ogg" || detected == "application/octet-stream"
+	}
+	return false
 }
 
 func kindForMime(mt string) core.AttachmentKind {
