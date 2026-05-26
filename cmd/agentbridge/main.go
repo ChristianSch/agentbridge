@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/ChristianSch/agentbridge/internal/adapters/agent"
 	httpadapter "github.com/ChristianSch/agentbridge/internal/adapters/http"
@@ -36,8 +37,17 @@ func main() {
 	}
 	var transcriber = transcribe.WhisperCPP{Binary: cfg.Voice.Binary, Model: cfg.Voice.Model, Language: cfg.Voice.Language, Threads: cfg.Voice.Threads, Timeout: cfg.Voice.Timeout}
 	srv := httpadapter.New(cfg, mgr, static.FS(), attachments, transcriber)
+	server := &http.Server{
+		Addr:              cfg.Bind,
+		Handler:           srv.Handler(),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    1 << 20,
+	}
 	log.Printf("agentbridge listening on %s", cfg.Bind)
-	log.Fatal(http.ListenAndServe(cfg.Bind, srv.Handler()))
+	log.Fatal(server.ListenAndServe())
 }
 
 func setenv(key, value string) error { return os.Setenv(key, value) }
