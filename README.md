@@ -93,6 +93,8 @@ Implemented:
 - Local voice transcription via whisper.cpp-compatible `whisper-cli`
 - Preact/xterm frontend with session sidebar, agent chat, terminal panes, attachment chips, voice recording, and approval buttons
 
+Attachment uploads are stored in AgentBridge's state directory and scoped to the browser owner/session. Coding agents may receive a local attachment path so they can read uploaded files directly; treat uploaded files as available to that session's agent process.
+
 ## Useful API
 
 ```sh

@@ -38,8 +38,10 @@ func main() {
 	var transcriber = transcribe.WhisperCPP{Binary: cfg.Voice.Binary, Model: cfg.Voice.Model, Language: cfg.Voice.Language, Threads: cfg.Voice.Threads, Timeout: cfg.Voice.Timeout}
 	srv := httpadapter.New(cfg, mgr, static.FS(), attachments, transcriber)
 	server := &http.Server{
-		Addr:              cfg.Bind,
-		Handler:           srv.Handler(),
+		Addr:    cfg.Bind,
+		Handler: srv.Handler(),
+		// WebSocket connections are hijacked after the HTTP upgrade; these
+		// timeouts protect normal HTTP requests and the upgrade handshake.
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
