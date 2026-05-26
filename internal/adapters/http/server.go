@@ -10,6 +10,7 @@ import (
 	"log"
 	"mime"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -35,7 +36,23 @@ type Server struct {
 func New(cfg config.Config, store core.SessionStore, frontend fs.FS, attachments core.AttachmentStore, transcriber core.Transcriber) *Server {
 	_ = mime.AddExtensionType(".css", "text/css; charset=utf-8")
 	_ = mime.AddExtensionType(".js", "application/javascript; charset=utf-8")
-	return &Server{cfg: cfg, store: store, attachments: attachments, transcriber: transcriber, frontend: frontend, authn: newAuthManager(cfg), upgrader: websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}}
+	s := &Server{cfg: cfg, store: store, attachments: attachments, transcriber: transcriber, frontend: frontend, authn: newAuthManager(cfg)}
+	s.upgrader = websocket.Upgrader{CheckOrigin: s.checkWebSocketOrigin}
+	return s
+}
+
+func (s *Server) checkWebSocketOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		// Non-browser clients may omit Origin, but must authenticate with an
+		// explicit request token instead of ambient cookies.
+		return r.Header.Get("Authorization") != "" && s.requestTokenOK(r)
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	return strings.EqualFold(u.Host, r.Host)
 }
 
 func (s *Server) Handler() http.Handler {
