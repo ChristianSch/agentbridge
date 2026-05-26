@@ -72,7 +72,7 @@ func convertToWAV(ctx context.Context, in string) (string, func(), error) {
 	}
 	path := out.Name()
 	_ = out.Close()
-	cmd := exec.CommandContext(ctx, "ffmpeg", "-y", "-i", in, "-ar", "16000", "-ac", "1", path)
+	cmd := exec.CommandContext(ctx, "ffmpeg", "-nostdin", "-v", "error", "-y", "-i", in, "-ar", "16000", "-ac", "1", path)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {

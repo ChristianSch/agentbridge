@@ -434,6 +434,10 @@ func (s *Server) transcribe(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	if !strings.HasPrefix(att.MimeType, "audio/") {
+		http.Error(w, "transcription requires an audio upload", http.StatusBadRequest)
+		return
+	}
 	tr, err := s.transcriber.Transcribe(r.Context(), att)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)

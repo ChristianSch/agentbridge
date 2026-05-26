@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/ChristianSch/agentbridge/internal/core"
 )
@@ -54,11 +55,14 @@ func (s *LocalAttachmentStore) Save(ctx context.Context, r io.Reader, meta core.
 	if int64(len(data)) > s.maxSize {
 		return core.Attachment{}, fmt.Errorf("attachment too large (max %d bytes)", s.maxSize)
 	}
-	mimeType := meta.MimeType
+	detectedMime := strings.ToLower(strings.Split(http.DetectContentType(data), ";")[0])
+	mimeType := strings.ToLower(strings.Split(meta.MimeType, ";")[0])
 	if mimeType == "" || mimeType == "application/octet-stream" {
-		mimeType = http.DetectContentType(data)
+		mimeType = detectedMime
 	}
-	mimeType = strings.ToLower(strings.Split(mimeType, ";")[0])
+	if mimeType == "application/pdf" && detectedMime != "application/pdf" {
+		return core.Attachment{}, fmt.Errorf("uploaded file is not a PDF")
+	}
 	if len(s.allowed) > 0 && !s.allowed[mimeType] {
 		return core.Attachment{}, fmt.Errorf("unsupported attachment type %q", mimeType)
 	}
@@ -90,7 +94,7 @@ func (s *LocalAttachmentStore) Save(ctx context.Context, r io.Reader, meta core.
 	if att.Kind == core.AttachmentText && len(data) <= 512*1024 {
 		att.ExtractedText = string(data)
 	}
-	if att.MimeType == "application/pdf" {
+	if att.MimeType == "application/pdf" && detectedMime == "application/pdf" {
 		att.ExtractedText = extractPDFText(path)
 	}
 	s.mu.Lock()
@@ -155,7 +159,9 @@ func (s *LocalAttachmentStore) saveIndex() {
 }
 
 func extractPDFText(path string) string {
-	cmd := exec.Command("pdftotext", "-layout", path, "-")
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "pdftotext", "-layout", path, "-")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
