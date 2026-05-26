@@ -211,7 +211,7 @@ func (s *Server) tokenLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.authn == nil {
-		http.SetCookie(w, &http.Cookie{Name: "ab_token", Value: s.cfg.Token, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: isHTTPS(r), MaxAge: 86400})
+		s.setTokenSession(w, r)
 		writeJSON(w, map[string]any{"ok": true, "passkeys": false, "registered": false, "authenticated": true})
 		return
 	}

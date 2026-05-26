@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 
@@ -25,19 +26,21 @@ import (
 )
 
 type Server struct {
-	cfg         config.Config
-	store       core.SessionStore
-	attachments core.AttachmentStore
-	transcriber core.Transcriber
-	frontend    fs.FS
-	authn       *authManager
-	upgrader    websocket.Upgrader
+	cfg           config.Config
+	store         core.SessionStore
+	attachments   core.AttachmentStore
+	transcriber   core.Transcriber
+	frontend      fs.FS
+	authn         *authManager
+	upgrader      websocket.Upgrader
+	tokenMu       sync.Mutex
+	tokenSessions map[string]time.Time
 }
 
 func New(cfg config.Config, store core.SessionStore, frontend fs.FS, attachments core.AttachmentStore, transcriber core.Transcriber) *Server {
 	_ = mime.AddExtensionType(".css", "text/css; charset=utf-8")
 	_ = mime.AddExtensionType(".js", "application/javascript; charset=utf-8")
-	s := &Server{cfg: cfg, store: store, attachments: attachments, transcriber: transcriber, frontend: frontend, authn: newAuthManager(cfg)}
+	s := &Server{cfg: cfg, store: store, attachments: attachments, transcriber: transcriber, frontend: frontend, authn: newAuthManager(cfg), tokenSessions: map[string]time.Time{}}
 	s.upgrader = websocket.Upgrader{CheckOrigin: s.checkWebSocketOrigin}
 	return s
 }
@@ -102,14 +105,26 @@ func (s *Server) requestTokenOK(r *http.Request) bool {
 }
 
 func (s *Server) cookieTokenOK(r *http.Request) bool {
-	if s.cfg.Token == "" {
-		return false
-	}
 	c, err := r.Cookie("ab_token")
 	if err != nil || c.Value == "" {
 		return false
 	}
-	return subtle.ConstantTimeCompare([]byte(c.Value), []byte(s.cfg.Token)) == 1
+	s.tokenMu.Lock()
+	defer s.tokenMu.Unlock()
+	exp, ok := s.tokenSessions[c.Value]
+	if !ok || time.Now().After(exp) {
+		delete(s.tokenSessions, c.Value)
+		return false
+	}
+	return true
+}
+
+func (s *Server) setTokenSession(w http.ResponseWriter, r *http.Request) {
+	id := randString(32)
+	s.tokenMu.Lock()
+	s.tokenSessions[id] = time.Now().Add(24 * time.Hour)
+	s.tokenMu.Unlock()
+	http.SetCookie(w, &http.Cookie{Name: "ab_token", Value: id, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: isHTTPS(r), MaxAge: 86400})
 }
 
 func (s *Server) authRequired() bool {
