@@ -100,9 +100,10 @@ type Config struct {
 		Timeout  time.Duration `yaml:"timeout"`
 	} `yaml:"voice"`
 	Auth struct {
-		Passkeys bool     `yaml:"passkeys"`
-		RPID     string   `yaml:"rp_id"`
-		Origins  []string `yaml:"origins"`
+		Passkeys            bool     `yaml:"passkeys"`
+		RPID                string   `yaml:"rp_id"`
+		Origins             []string `yaml:"origins"`
+		AllowInsecureNoAuth bool     `yaml:"allow_insecure_no_auth"`
 	} `yaml:"auth"`
 	Projects      []Project `yaml:"projects"`
 	Notifications struct {

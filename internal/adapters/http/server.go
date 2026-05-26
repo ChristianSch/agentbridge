@@ -97,10 +97,7 @@ func (s *Server) requestTokenOK(r *http.Request) bool {
 		return false
 	}
 	tok := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	if tok == "" {
-		tok = r.URL.Query().Get("token")
-	}
-	return subtle.ConstantTimeCompare([]byte(tok), []byte(s.cfg.Token)) == 1
+	return tok != "" && subtle.ConstantTimeCompare([]byte(tok), []byte(s.cfg.Token)) == 1
 }
 
 func (s *Server) cookieTokenOK(r *http.Request) bool {
@@ -114,26 +111,8 @@ func (s *Server) cookieTokenOK(r *http.Request) bool {
 	return subtle.ConstantTimeCompare([]byte(c.Value), []byte(s.cfg.Token)) == 1
 }
 
-func (s *Server) persistTokenCookie(w http.ResponseWriter, r *http.Request) {
-	if s.cfg.Token == "" || r.URL.Query().Get("token") == "" || !s.requestTokenOK(r) {
-		return
-	}
-	http.SetCookie(w, &http.Cookie{Name: "ab_token", Value: s.cfg.Token, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: isHTTPS(r), MaxAge: 86400})
-}
-
-func (s *Server) stripTokenRedirect(w http.ResponseWriter, r *http.Request) bool {
-	if r.URL.Query().Get("token") == "" || !s.requestTokenOK(r) {
-		return false
-	}
-	s.persistTokenCookie(w, r)
-	q := r.URL.Query()
-	q.Del("token")
-	target := r.URL.Path
-	if encoded := q.Encode(); encoded != "" {
-		target += "?" + encoded
-	}
-	http.Redirect(w, r, target, http.StatusFound)
-	return true
+func (s *Server) authRequired() bool {
+	return s.cfg.Token != "" || s.authn != nil || !s.cfg.Auth.AllowInsecureNoAuth
 }
 
 func (s *Server) hasAuth(r *http.Request) bool {
@@ -156,14 +135,13 @@ func visibleToOwner(sess core.Session, ownerID string) bool {
 
 func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if s.cfg.Token != "" || s.authn != nil {
+		if s.authRequired() {
 			if !s.hasAuth(r) {
 				log.Printf("http unauthorized %s %s remote=%s", r.Method, r.URL.Path, r.RemoteAddr)
-				http.Error(w, "AgentBridge locked: authenticate with a passkey at /login or provide a valid Bearer token / ?token=...", http.StatusUnauthorized)
+				http.Error(w, "AgentBridge locked: authenticate at /login or provide a valid Bearer token", http.StatusUnauthorized)
 				return
 			}
 		}
-		s.persistTokenCookie(w, r)
 		log.Printf("http %s %s remote=%s", r.Method, r.URL.Path, r.RemoteAddr)
 		next(w, r.WithContext(core.WithOwnerID(r.Context(), s.ownerID(r))))
 	}
@@ -175,14 +153,11 @@ func (s *Server) uiAuth(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if s.stripTokenRedirect(w, r) {
-			return
-		}
 		if r.URL.Path == "/login" {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if (s.cfg.Token != "" || s.authn != nil) && !s.hasAuth(r) {
+		if s.authRequired() && !s.hasAuth(r) {
 			http.Redirect(w, r, "/login", http.StatusFound)
 			return
 		}

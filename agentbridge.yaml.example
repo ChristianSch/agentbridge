@@ -44,6 +44,7 @@ voice:
 
 auth:
   passkeys: false
+  allow_insecure_no_auth: false # only set true for loopback-only throwaway development
   rp_id: "sam-1.example.ts.net" # host only, no scheme
   origins:
     - "https://sam-1.example.ts.net"

@@ -24,8 +24,10 @@ AGENTBRIDGE_TOKEN=dev go run ./cmd/agentbridge --config ./agentbridge.yaml 2>&1 
 Open:
 
 ```text
-http://127.0.0.1:7777/?token=dev
+http://127.0.0.1:7777/login
 ```
+
+Enter the token in the login form.
 
 Build a binary:
 
@@ -54,7 +56,7 @@ Recommended setup:
    tailscale serve --bg --http=7777 http://127.0.0.1:7777
    tailscale serve status
    ```
-   Then open the Tailscale Serve URL from devices in your tailnet and pass the token as `?token=...` once.
+   Then open `/login` on the Tailscale Serve URL from devices in your tailnet and enter the token in the form.
 4. Optional, enable passkeys for Face ID / Touch ID / security keys:
    ```yaml
    auth:
@@ -66,7 +68,7 @@ Recommended setup:
    Open `/login` with your bootstrap token once, register a passkey, then normal browser sessions unlock with Face ID or a security key. WebAuthn requires HTTPS, so use the HTTPS Tailscale Serve URL.
 5. Do not enable Tailscale Funnel for AgentBridge. Funnel makes it internet-facing.
 
-AgentBridge logs a security warning if token auth is disabled, if a development token is used, or if it is bound to a non-loopback address. API requests without valid auth return a clear locked message, and the main UI redirects to `/login` instead of loading unauthenticated.
+AgentBridge logs a security warning if token auth is disabled, if a development token is used, or if it is bound to a non-loopback address. If neither token auth nor passkeys are configured, protected routes stay locked unless `auth.allow_insecure_no_auth: true` is explicitly set. API requests without valid auth return a clear locked message, and the main UI redirects to `/login` instead of loading unauthenticated. Tokens should be entered in the login form, not placed in URLs.
 
 ## Current status
 

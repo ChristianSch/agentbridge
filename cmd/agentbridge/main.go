@@ -44,7 +44,7 @@ func setenv(key, value string) error { return os.Setenv(key, value) }
 
 func warnSecurity(bind, token string) {
 	if token == "" {
-		log.Printf("SECURITY WARNING: token auth is disabled; set AGENTBRIDGE_TOKEN or token in config before exposing AgentBridge")
+		log.Printf("SECURITY WARNING: token auth is disabled; AgentBridge will stay locked unless passkeys are enabled or auth.allow_insecure_no_auth is explicitly set")
 	} else if token == "change-me" || token == "dev" {
 		log.Printf("SECURITY WARNING: token %q is for development only; use a high-entropy token", token)
 	}
