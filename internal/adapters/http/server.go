@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"log"
 	"mime"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -35,12 +36,14 @@ type Server struct {
 	upgrader      websocket.Upgrader
 	tokenMu       sync.Mutex
 	tokenSessions map[string]time.Time
+	rateMu        sync.Mutex
+	rateAttempts  map[string][]time.Time
 }
 
 func New(cfg config.Config, store core.SessionStore, frontend fs.FS, attachments core.AttachmentStore, transcriber core.Transcriber) *Server {
 	_ = mime.AddExtensionType(".css", "text/css; charset=utf-8")
 	_ = mime.AddExtensionType(".js", "application/javascript; charset=utf-8")
-	s := &Server{cfg: cfg, store: store, attachments: attachments, transcriber: transcriber, frontend: frontend, authn: newAuthManager(cfg), tokenSessions: map[string]time.Time{}}
+	s := &Server{cfg: cfg, store: store, attachments: attachments, transcriber: transcriber, frontend: frontend, authn: newAuthManager(cfg), tokenSessions: map[string]time.Time{}, rateAttempts: map[string][]time.Time{}}
 	s.upgrader = websocket.Upgrader{CheckOrigin: s.checkWebSocketOrigin}
 	return s
 }
@@ -125,6 +128,31 @@ func (s *Server) setTokenSession(w http.ResponseWriter, r *http.Request) {
 	s.tokenSessions[id] = time.Now().Add(24 * time.Hour)
 	s.tokenMu.Unlock()
 	http.SetCookie(w, &http.Cookie{Name: "ab_token", Value: id, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: isHTTPS(r), MaxAge: 86400})
+}
+
+func (s *Server) allowAuthAttempt(r *http.Request, scope string, limit int, window time.Duration) bool {
+	remote := r.RemoteAddr
+	if host, _, err := net.SplitHostPort(remote); err == nil {
+		remote = host
+	}
+	key := scope + ":" + remote
+	now := time.Now()
+	cutoff := now.Add(-window)
+	s.rateMu.Lock()
+	defer s.rateMu.Unlock()
+	attempts := s.rateAttempts[key]
+	kept := attempts[:0]
+	for _, ts := range attempts {
+		if ts.After(cutoff) {
+			kept = append(kept, ts)
+		}
+	}
+	if len(kept) >= limit {
+		s.rateAttempts[key] = kept
+		return false
+	}
+	s.rateAttempts[key] = append(kept, now)
+	return true
 }
 
 func (s *Server) authRequired() bool {

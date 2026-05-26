@@ -199,6 +199,10 @@ func (s *Server) tokenLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	if !s.allowAuthAttempt(r, "token", 10, 5*time.Minute) {
+		http.Error(w, "too many authentication attempts", http.StatusTooManyRequests)
+		return
+	}
 	var req struct {
 		Token string `json:"token"`
 	}
@@ -220,6 +224,10 @@ func (s *Server) tokenLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) passkeyRegisterBegin(w http.ResponseWriter, r *http.Request) {
+	if !s.allowAuthAttempt(r, "passkey-register", 20, 5*time.Minute) {
+		http.Error(w, "too many authentication attempts", http.StatusTooManyRequests)
+		return
+	}
 	if s.authn == nil {
 		http.Error(w, "passkeys are not enabled", 404)
 		return
@@ -277,6 +285,10 @@ func (s *Server) passkeyRegisterFinish(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) passkeyLoginBegin(w http.ResponseWriter, r *http.Request) {
+	if !s.allowAuthAttempt(r, "passkey-login", 20, 5*time.Minute) {
+		http.Error(w, "too many authentication attempts", http.StatusTooManyRequests)
+		return
+	}
 	if s.authn == nil || !s.authn.hasCredential() {
 		http.Error(w, "no passkey registered", 404)
 		return
