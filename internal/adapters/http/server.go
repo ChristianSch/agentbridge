@@ -88,11 +88,22 @@ func (s *Server) Handler() http.Handler {
 
 func (s *Server) noCache(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		setSecurityHeaders(w, "")
 		w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
 		w.Header().Set("Pragma", "no-cache")
 		w.Header().Set("Expires", "0")
 		next.ServeHTTP(w, r)
 	})
+}
+
+func setSecurityHeaders(w http.ResponseWriter, scriptNonce string) {
+	scriptSrc := "'self'"
+	if scriptNonce != "" {
+		scriptSrc += " 'nonce-" + scriptNonce + "'"
+	}
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src "+scriptSrc+"; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws: wss:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Referrer-Policy", "no-referrer")
 }
 
 func (s *Server) tokenOK(r *http.Request) bool {

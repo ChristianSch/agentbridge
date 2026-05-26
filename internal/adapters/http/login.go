@@ -1,12 +1,15 @@
 package httpadapter
 
-import "net/http"
+import (
+	"net/http"
+	"strings"
+)
 
 const loginHTML = `<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Unlock AgentBridge</title>
 <style>body{margin:0;min-height:100dvh;display:grid;place-items:center;background:#141414;color:#d7c7a1;font:15px ui-monospace,SFMono-Regular,Menlo,monospace}.box{width:min(520px,calc(100vw - 32px));border:1px solid #4b4638;background:#151515;padding:18px;box-shadow:0 20px 80px #050505aa}h1{margin:0 0 8px;font-size:20px}p{color:#9f926f}.row{display:flex;gap:8px;flex-wrap:wrap}button{min-height:40px;border:1px solid #6f684f;background:#25251f;color:#d7c7a1;font:inherit;font-weight:800;padding:0 13px}button.primary{background:#12324a;border-color:#00afff;color:#f0e4bd}input{min-height:40px;border:1px solid #4b4638;background:#0c0c0c;color:#d7c7a1;padding:0 10px;font:inherit;flex:1}.err{color:#ffb0a0;white-space:pre-wrap}</style></head>
 <body><main class="box"><h1>Unlock AgentBridge</h1><p id="status">Checking authentication…</p><div class="row"><button id="enter" class="primary" style="display:none">Enter AgentBridge</button><button id="login" class="primary">Use Face ID / security key</button><button id="register">Register passkey</button></div><p>Bootstrap token</p><div class="row"><input id="token" placeholder="AGENTBRIDGE_TOKEN"><button id="tokenBtn">Use token</button></div><p class="err" id="err"></p></main>
-<script>
+<script nonce="{{CSP_NONCE}}">
 localStorage.removeItem('agentbridgeToken');
 const $=id=>document.getElementById(id);
 function b64uToBuf(s){s=s.replace(/-/g,'+').replace(/_/g,'/'); while(s.length%4)s+='='; return Uint8Array.from(atob(s),c=>c.charCodeAt(0)).buffer}
@@ -24,10 +27,12 @@ $('enter').onclick=()=>{location.href='/'}; $('login').onclick=login; $('registe
 </script></body></html>`
 
 func (s *Server) loginPage(w http.ResponseWriter, r *http.Request) {
+	nonce := randString(18)
+	setSecurityHeaders(w, nonce)
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
 	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("Expires", "0")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(loginHTML))
+	_, _ = w.Write([]byte(strings.ReplaceAll(loginHTML, "{{CSP_NONCE}}", nonce)))
 }
