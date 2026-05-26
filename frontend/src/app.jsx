@@ -3,11 +3,11 @@ import { useEffect, useRef, useState } from 'preact/hooks'
 import { Terminal } from 'xterm'
 import { FitAddon } from 'xterm-addon-fit'
 import snarkdown from 'snarkdown'
+import DOMPurify from 'dompurify'
 import 'xterm/css/xterm.css'
 import './style.css'
 
 localStorage.removeItem('agentbridgeToken')
-const token = ''
 
 function authHeaders(extra = {}) { return { ...extra } }
 async function api(path, opts = {}) { const res = await fetch(path, { ...opts, headers: authHeaders(opts.headers) }); if (!res.ok) throw new Error(await res.text()); return res.status === 204 ? null : res.json() }
@@ -63,7 +63,7 @@ function App() {
 
   useEffect(() => { refresh().catch(console.error); api('/api/detect').then(setDetectInfo).catch(console.error) }, [])
   useEffect(() => {
-    const url = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws${token ? `?token=${encodeURIComponent(token)}` : ''}`
+    const url = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`
     const sock = new WebSocket(url)
     ws.current = sock
     sock.onopen = () => { setSocketState('connected'); setSessions(list => { list.forEach(s => subscribe(s.id)); return list }) }
@@ -179,8 +179,15 @@ function ApprovalMessage({ msg, onSend }) { return <div class="msg approval"><di
 function CopyableMessage({ className, text, html }) { const [copied, setCopied] = useState(false); async function copy() { try { await navigator.clipboard.writeText(text || ''); setCopied(true); setTimeout(() => setCopied(false), 1200) } catch {} } return <div class={`${className} copyable`}>{html ? <div dangerouslySetInnerHTML={{ __html: html }} /> : text}<button type="button" class="copy-button" title="Copy message" onClick={copy}>{copied ? 'copied' : 'copy'}</button></div> }
 function ActivityGroup({ msg }) { const thoughts = msg.items.filter(i => i.type === 'thinking').length, tools = msg.items.filter(i => i.type === 'tool').length; return <details class="msg activity"><summary>Activity{thoughts ? ` · ${thoughts} thinking` : ''}{tools ? ` · ${tools} tool${tools === 1 ? '' : 's'}` : ''}</summary>{msg.items.map((item, i) => <div class={`activity-item ${item.type}`} key={i}><strong>{item.type === 'tool' ? item.title : 'Thinking'}</strong><pre>{item.text}</pre></div>)}</details> }
 function groupMessages(messages) { const out = []; for (const msg of messages) { if (msg.type === 'thinking' || msg.type === 'tool') { const last = out[out.length - 1]; if (last?.type === 'activity') last.items.push(msg); else out.push({ type: 'activity', items: [msg] }); } else out.push(msg); } return out }
-function renderMarkdown(text) { return snarkdown(text || '') }
-function TerminalPane({ sessionId }) { const ref = useRef(null); useEffect(() => { const term = new Terminal({ fontSize: 14, cursorBlink: true, theme: { background: '#15171d' } }); const fit = new FitAddon(); term.loadAddon(fit); term.open(ref.current); fit.fit(); const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/term/${sessionId}${token ? `?token=${encodeURIComponent(token)}` : ''}`); ws.binaryType = 'arraybuffer'; ws.onmessage = e => { if (typeof e.data !== 'string') term.write(new Uint8Array(e.data)) }; ws.onopen = () => resize(term, ws, fit); term.onData(data => ws.readyState === WebSocket.OPEN && ws.send(data)); const onResize = () => resize(term, ws, fit); window.addEventListener('resize', onResize); const timer = setTimeout(onResize, 50); return () => { clearTimeout(timer); window.removeEventListener('resize', onResize); ws.close(); term.dispose() } }, [sessionId]); return <div class="terminal" ref={ref} /> }
+function renderMarkdown(text) {
+  return DOMPurify.sanitize(snarkdown(text || ''), {
+    USE_PROFILES: { html: true },
+    FORBID_TAGS: ['iframe', 'object', 'embed', 'script', 'style', 'form', 'input', 'button'],
+    FORBID_ATTR: ['style', 'srcset'],
+    ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto):|[^a-z]|[a-z+.-]+(?:[^a-z+.-:]|$))/i,
+  })
+}
+function TerminalPane({ sessionId }) { const ref = useRef(null); useEffect(() => { const term = new Terminal({ fontSize: 14, cursorBlink: true, theme: { background: '#15171d' } }); const fit = new FitAddon(); term.loadAddon(fit); term.open(ref.current); fit.fit(); const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/term/${sessionId}`); ws.binaryType = 'arraybuffer'; ws.onmessage = e => { if (typeof e.data !== 'string') term.write(new Uint8Array(e.data)) }; ws.onopen = () => resize(term, ws, fit); term.onData(data => ws.readyState === WebSocket.OPEN && ws.send(data)); const onResize = () => resize(term, ws, fit); window.addEventListener('resize', onResize); const timer = setTimeout(onResize, 50); return () => { clearTimeout(timer); window.removeEventListener('resize', onResize); ws.close(); term.dispose() } }, [sessionId]); return <div class="terminal" ref={ref} /> }
 function resize(term, ws, fit) { fit.fit(); if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows })) }
 function normalizeEvent(ev) {
   if (ev.event === 'state_change' || ev.event === 'response' || ev.event === 'message_start' || ev.event === 'message_end' || ev.event === 'message_update') return null
