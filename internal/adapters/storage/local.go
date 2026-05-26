@@ -83,7 +83,7 @@ func (s *LocalAttachmentStore) Save(ctx context.Context, r io.Reader, meta core.
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return core.Attachment{}, err
 	}
-	att := core.Attachment{ID: id, Kind: kindForMime(mimeType), FileName: name, MimeType: mimeType, Size: int64(len(data)), Path: path}
+	att := core.Attachment{ID: id, Kind: kindForMime(mimeType), FileName: name, MimeType: mimeType, Size: int64(len(data)), OwnerID: owner, SessionID: session, Path: path}
 	if att.Kind == core.AttachmentImage {
 		att.Preview = "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(data)
 	}
@@ -100,11 +100,14 @@ func (s *LocalAttachmentStore) Save(ctx context.Context, r io.Reader, meta core.
 	return att, nil
 }
 
-func (s *LocalAttachmentStore) Get(_ context.Context, id string) (core.Attachment, error) {
+func (s *LocalAttachmentStore) Get(ctx context.Context, id string) (core.Attachment, error) {
 	s.mu.RLock()
 	att, ok := s.items[id]
 	s.mu.RUnlock()
 	if !ok {
+		return core.Attachment{}, fmt.Errorf("attachment not found")
+	}
+	if !attachmentVisible(ctx, att) {
 		return core.Attachment{}, fmt.Errorf("attachment not found")
 	}
 	return att, nil
@@ -118,9 +121,13 @@ func (s *LocalAttachmentStore) Open(ctx context.Context, id string) (io.ReadClos
 	return os.Open(att.Path)
 }
 
-func (s *LocalAttachmentStore) Delete(_ context.Context, id string) error {
+func (s *LocalAttachmentStore) Delete(ctx context.Context, id string) error {
 	s.mu.Lock()
 	att, ok := s.items[id]
+	if ok && !attachmentVisible(ctx, att) {
+		s.mu.Unlock()
+		return fmt.Errorf("attachment not found")
+	}
 	if ok {
 		delete(s.items, id)
 	}
@@ -185,6 +192,11 @@ func safeSegment(s string) string {
 		return '_'
 	}, s)
 }
+func attachmentVisible(ctx context.Context, att core.Attachment) bool {
+	owner := safeSegment(core.OwnerID(ctx))
+	return att.OwnerID == "" || owner == "" || att.OwnerID == owner
+}
+
 func safeFileName(s string) string { return safeSegment(filepath.Base(s)) }
 func defaultRoot() string {
 	if base := os.Getenv("AGENTBRIDGE_STATE_DIR"); base != "" {

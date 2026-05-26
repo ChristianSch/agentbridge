@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"io/fs"
 	"log"
@@ -364,19 +365,23 @@ func (s *Server) uploadAttachment(w http.ResponseWriter, r *http.Request) {
 	if max := int64(s.cfg.Attachments.MaxSize); max > 0 {
 		r.Body = http.MaxBytesReader(w, r.Body, max+1024*1024)
 	}
+	sessionID := r.FormValue("session_id")
+	if !s.canUseSession(r, sessionID) {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
 	file, header, err := r.FormFile("file")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	defer file.Close()
-	att, err := s.attachments.Save(r.Context(), file, core.AttachmentMeta{SessionID: r.FormValue("session_id"), FileName: header.Filename, MimeType: header.Header.Get("Content-Type"), Size: header.Size})
+	att, err := s.attachments.Save(r.Context(), file, core.AttachmentMeta{SessionID: sessionID, FileName: header.Filename, MimeType: header.Header.Get("Content-Type"), Size: header.Size})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	att.Path = ""
-	writeJSON(w, att)
+	writeJSON(w, publicAttachment(att))
 }
 
 func (s *Server) attachmentByID(w http.ResponseWriter, r *http.Request) {
@@ -392,8 +397,7 @@ func (s *Server) attachmentByID(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusNotFound)
 			return
 		}
-		att.Path = ""
-		writeJSON(w, att)
+		writeJSON(w, publicAttachment(att))
 	case http.MethodDelete:
 		_ = s.attachments.Delete(r.Context(), id)
 		w.WriteHeader(http.StatusNoContent)
@@ -414,13 +418,18 @@ func (s *Server) transcribe(w http.ResponseWriter, r *http.Request) {
 	if max := int64(s.cfg.Attachments.MaxSize); max > 0 {
 		r.Body = http.MaxBytesReader(w, r.Body, max+1024*1024)
 	}
+	sessionID := r.FormValue("session_id")
+	if !s.canUseSession(r, sessionID) {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
 	file, header, err := r.FormFile("file")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	defer file.Close()
-	att, err := s.attachments.Save(r.Context(), file, core.AttachmentMeta{SessionID: r.FormValue("session_id"), FileName: header.Filename, MimeType: header.Header.Get("Content-Type"), Size: header.Size})
+	att, err := s.attachments.Save(r.Context(), file, core.AttachmentMeta{SessionID: sessionID, FileName: header.Filename, MimeType: header.Header.Get("Content-Type"), Size: header.Size})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -431,11 +440,25 @@ func (s *Server) transcribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	att.ExtractedText = tr.Text
-	att.Path = ""
-	writeJSON(w, map[string]any{"text": tr.Text, "attachment": att, "transcript": tr})
+	writeJSON(w, map[string]any{"text": tr.Text, "attachment": publicAttachment(att), "transcript": tr})
 }
 
-func (s *Server) resolveAttachments(ctx context.Context, ids []string) ([]core.Attachment, error) {
+func (s *Server) canUseSession(r *http.Request, id string) bool {
+	if id == "" {
+		return true
+	}
+	sess, ok := s.store.Get(id)
+	return ok && visibleToOwner(sess, core.OwnerID(r.Context()))
+}
+
+func publicAttachment(att core.Attachment) core.Attachment {
+	att.OwnerID = ""
+	att.Path = ""
+	att.Content = ""
+	return att
+}
+
+func (s *Server) resolveAttachments(ctx context.Context, sessionID string, ids []string) ([]core.Attachment, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
@@ -447,6 +470,9 @@ func (s *Server) resolveAttachments(ctx context.Context, ids []string) ([]core.A
 		att, err := s.attachments.Get(ctx, id)
 		if err != nil {
 			return nil, err
+		}
+		if att.SessionID != "" && sessionID != "" && att.SessionID != sessionID {
+			return nil, errors.New("attachment not found")
 		}
 		if att.Kind == core.AttachmentImage {
 			rc, err := s.attachments.Open(ctx, id)
@@ -531,7 +557,7 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if len(cmd.AttachmentIDs) > 0 {
-			atts, err := s.resolveAttachments(r.Context(), cmd.AttachmentIDs)
+			atts, err := s.resolveAttachments(r.Context(), cmd.SessionID, cmd.AttachmentIDs)
 			if err != nil {
 				write(map[string]any{"event": "error", "content": err.Error()})
 				continue

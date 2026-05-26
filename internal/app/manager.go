@@ -459,7 +459,7 @@ func (m *Manager) Send(c core.ClientCommand) error {
 		p.addAttachments(c.Attachments)
 	}
 	if c.Action == "prompt" {
-		m.publish(core.AgentEvent{Event: "user_message", SessionID: p.ID, Content: c.Text, Attachments: c.Attachments})
+		m.publish(core.AgentEvent{Event: "user_message", SessionID: p.ID, Content: c.Text, Attachments: publicAttachments(c.Attachments)})
 	}
 	if p.Kind == core.AgentHermes {
 		b = m.addHermesSessionID(p, b)
@@ -604,6 +604,17 @@ func collectResumeIDs(kind core.AgentKind, v any, resumeID, remoteID string) (st
 func stringValue(v any) string {
 	s, _ := v.(string)
 	return s
+}
+
+func publicAttachments(attachments []core.Attachment) []core.Attachment {
+	out := make([]core.Attachment, 0, len(attachments))
+	for _, att := range attachments {
+		att.OwnerID = ""
+		att.Path = ""
+		att.Content = ""
+		out = append(out, att)
+	}
+	return out
 }
 
 func attachmentsFromHistory(events []core.AgentEvent) map[string]core.Attachment {

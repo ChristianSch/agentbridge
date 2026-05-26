@@ -54,6 +54,8 @@ type Attachment struct {
 	FileName      string         `json:"file_name"`
 	MimeType      string         `json:"mime_type"`
 	Size          int64          `json:"size"`
+	OwnerID       string         `json:"owner_id,omitempty"`
+	SessionID     string         `json:"session_id,omitempty"`
 	Path          string         `json:"path,omitempty"`
 	Content       string         `json:"content,omitempty"`
 	ExtractedText string         `json:"extracted_text,omitempty"`
