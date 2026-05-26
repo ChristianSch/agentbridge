@@ -24,8 +24,13 @@ type authManager struct {
 	path     string
 	wa       *webauthn.WebAuthn
 	user     *passkeyUser
-	ceremony map[string]webauthn.SessionData
+	ceremony map[string]ceremonyEntry
 	sessions map[string]time.Time
+}
+
+type ceremonyEntry struct {
+	Data    webauthn.SessionData
+	Expires time.Time
 }
 
 type passkeyUser struct {
@@ -58,7 +63,7 @@ func newAuthManager(cfg config.Config) *authManager {
 		log.Printf("passkeys disabled: %v", err)
 		return nil
 	}
-	am := &authManager{path: authStatePath(), wa: wa, ceremony: map[string]webauthn.SessionData{}, sessions: map[string]time.Time{}}
+	am := &authManager{path: authStatePath(), wa: wa, ceremony: map[string]ceremonyEntry{}, sessions: map[string]time.Time{}}
 	if err := am.load(); err != nil {
 		log.Printf("passkey state load failed: %v", err)
 	}
@@ -152,6 +157,39 @@ func randString(n int) string {
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
+func ceremonyCookieName(kind string) string { return "ab_" + kind + "_ceremony" }
+
+func (a *authManager) setCeremony(w http.ResponseWriter, r *http.Request, kind string, data webauthn.SessionData) {
+	id := randString(24)
+	exp := time.Now().Add(5 * time.Minute)
+	a.mu.Lock()
+	now := time.Now()
+	for key, entry := range a.ceremony {
+		if now.After(entry.Expires) {
+			delete(a.ceremony, key)
+		}
+	}
+	a.ceremony[kind+":"+id] = ceremonyEntry{Data: data, Expires: exp}
+	a.mu.Unlock()
+	http.SetCookie(w, &http.Cookie{Name: ceremonyCookieName(kind), Value: id, Path: "/auth/passkey/", HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: isHTTPS(r), MaxAge: 300})
+}
+
+func (a *authManager) takeCeremony(w http.ResponseWriter, r *http.Request, kind string) (webauthn.SessionData, bool) {
+	c, err := r.Cookie(ceremonyCookieName(kind))
+	if err != nil || c.Value == "" {
+		return webauthn.SessionData{}, false
+	}
+	a.mu.Lock()
+	entry, ok := a.ceremony[kind+":"+c.Value]
+	delete(a.ceremony, kind+":"+c.Value)
+	a.mu.Unlock()
+	http.SetCookie(w, &http.Cookie{Name: ceremonyCookieName(kind), Value: "", Path: "/auth/passkey/", HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: isHTTPS(r), MaxAge: -1})
+	if !ok || time.Now().After(entry.Expires) {
+		return webauthn.SessionData{}, false
+	}
+	return entry.Data, true
+}
+
 func (s *Server) authStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"passkeys": s.authn != nil, "registered": s.authn != nil && s.authn.hasCredential(), "authenticated": s.hasAuth(r)})
 }
@@ -193,14 +231,12 @@ func (s *Server) passkeyRegisterBegin(w http.ResponseWriter, r *http.Request) {
 	a := s.authn
 	a.mu.Lock()
 	creation, session, err := a.wa.BeginRegistration(a.user)
-	if err == nil {
-		a.ceremony["register"] = *session
-	}
 	a.mu.Unlock()
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
+	a.setCeremony(w, r, "register", *session)
 	writeJSON(w, creation)
 }
 
@@ -214,10 +250,7 @@ func (s *Server) passkeyRegisterFinish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a := s.authn
-	a.mu.Lock()
-	session, ok := a.ceremony["register"]
-	delete(a.ceremony, "register")
-	a.mu.Unlock()
+	session, ok := a.takeCeremony(w, r, "register")
 	if !ok {
 		http.Error(w, "registration challenge expired", 400)
 		return
@@ -251,14 +284,12 @@ func (s *Server) passkeyLoginBegin(w http.ResponseWriter, r *http.Request) {
 	a := s.authn
 	a.mu.Lock()
 	assertion, session, err := a.wa.BeginLogin(a.user)
-	if err == nil {
-		a.ceremony["login"] = *session
-	}
 	a.mu.Unlock()
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
+	a.setCeremony(w, r, "login", *session)
 	writeJSON(w, assertion)
 }
 
@@ -268,10 +299,7 @@ func (s *Server) passkeyLoginFinish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a := s.authn
-	a.mu.Lock()
-	session, ok := a.ceremony["login"]
-	delete(a.ceremony, "login")
-	a.mu.Unlock()
+	session, ok := a.takeCeremony(w, r, "login")
 	if !ok {
 		http.Error(w, "login challenge expired", 400)
 		return
