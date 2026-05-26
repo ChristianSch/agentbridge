@@ -23,7 +23,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	warnSecurity(cfg.Bind, cfg.Token)
+	warnSecurity(cfg)
 	if ext, err := agent.EnsurePiAttachmentExtension(""); err == nil {
 		log.Printf("pi attachment extension: %s", ext)
 		_ = setenv(agent.PiAttachmentExtensionEnv, ext)
@@ -54,22 +54,26 @@ func main() {
 
 func setenv(key, value string) error { return os.Setenv(key, value) }
 
-func warnSecurity(bind, token string) {
-	if token == "" {
-		log.Printf("SECURITY WARNING: token auth is disabled; AgentBridge will stay locked unless passkeys are enabled or auth.allow_insecure_no_auth is explicitly set")
-	} else if token == "change-me" || token == "dev" {
-		log.Printf("SECURITY WARNING: token %q is for development only; use a high-entropy token", token)
+func warnSecurity(cfg config.Config) {
+	if cfg.Token == "" {
+		if cfg.Auth.AllowInsecureNoAuth {
+			log.Printf("SECURITY WARNING: token auth is disabled and auth.allow_insecure_no_auth is enabled")
+		} else {
+			log.Printf("SECURITY WARNING: token auth is disabled; AgentBridge will stay locked unless passkeys are enabled or auth.allow_insecure_no_auth is explicitly set")
+		}
+	} else if cfg.Token == "change-me" || cfg.Token == "dev" {
+		log.Printf("SECURITY WARNING: token %q is for development only; use a high-entropy token", cfg.Token)
 	}
-	host := bind
-	if h, _, err := net.SplitHostPort(bind); err == nil {
+	host := cfg.Bind
+	if h, _, err := net.SplitHostPort(cfg.Bind); err == nil {
 		host = h
 	}
 	host = strings.Trim(host, "[]")
 	if host == "" || host == "0.0.0.0" || host == "::" {
-		log.Printf("SECURITY WARNING: bind address %q listens broadly; prefer 127.0.0.1 with Tailscale Serve in front", bind)
+		log.Printf("SECURITY WARNING: bind address %q listens broadly; prefer 127.0.0.1 with Tailscale Serve in front", cfg.Bind)
 		return
 	}
 	if ip := net.ParseIP(host); ip != nil && !ip.IsLoopback() {
-		log.Printf("SECURITY WARNING: bind address %q is not loopback; prefer 127.0.0.1 with Tailscale Serve in front", bind)
+		log.Printf("SECURITY WARNING: bind address %q is not loopback; prefer 127.0.0.1 with Tailscale Serve in front", cfg.Bind)
 	}
 }
