@@ -1042,6 +1042,17 @@ func (m *Manager) replaceHistory(sessionID string, events []core.AgentEvent, sou
 	}
 }
 
+func (m *Manager) addHistoryNotice(sessionID, content string) {
+	if sessionID == "" || content == "" {
+		return
+	}
+	h := m.history[sessionID]
+	if len(h) > 0 && h[len(h)-1].Event == "history_source" && h[len(h)-1].Content == content {
+		return
+	}
+	m.history[sessionID] = append(h, core.AgentEvent{Event: "history_source", SessionID: sessionID, Content: content})
+}
+
 func hermesMessagesToEvents(sessionID string, messages []any) []core.AgentEvent {
 	events := make([]core.AgentEvent, 0, len(messages))
 	for _, item := range messages {
@@ -1198,10 +1209,11 @@ func (m *Manager) restorePersisted() {
 		p.State = core.StateStarting
 		switch sess.Kind {
 		case core.AgentTerminal:
-			if err := m.startTerminal(p, ps.Shell); err != nil {
-				log.Printf("session %s: restore terminal failed: %v", sess.ID, err)
-				p.State = core.StateError
-			}
+			p.State = core.StateExited
+			m.sessions[sess.ID] = p
+			m.addHistoryNotice(sess.ID, "Terminal sessions are use-once and are not restarted after AgentBridge restarts.")
+			log.Printf("session %s: terminal restored as exited history; terminals are use-once", sess.ID)
+			continue
 		case core.AgentPi, core.AgentHermes:
 			ad, ok := m.adapters[sess.Kind]
 			if !ok {
