@@ -372,6 +372,25 @@ func (s *Server) sessions(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) sessionByID(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/api/sessions/")
+	if strings.HasSuffix(id, "/restart") {
+		id = strings.TrimSuffix(id, "/restart")
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if sess, ok := s.store.Get(id); !ok || !visibleToOwner(sess, core.OwnerID(r.Context())) {
+			http.Error(w, "session not found", http.StatusNotFound)
+			return
+		}
+		log.Printf("restart session id=%s", id)
+		sess, err := s.store.Restart(id)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, sess)
+		return
+	}
 	switch r.Method {
 	case http.MethodPatch:
 		if sess, ok := s.store.Get(id); !ok || !visibleToOwner(sess, core.OwnerID(r.Context())) {

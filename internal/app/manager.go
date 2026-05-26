@@ -376,6 +376,84 @@ func (m *Manager) ClaimSessions(ownerID string) error {
 	return nil
 }
 
+func (m *Manager) Restart(id string) (core.Session, error) {
+	m.mu.RLock()
+	p, ok := m.sessions[id]
+	m.mu.RUnlock()
+	if !ok {
+		return core.Session{}, errors.New("session not found")
+	}
+	if p.Kind == core.AgentTerminal {
+		return core.Session{}, errors.New("terminal sessions cannot be restarted")
+	}
+	p.mu.Lock()
+	if p.State != core.StateExited && p.State != core.StateError {
+		sess := p.Session
+		p.mu.Unlock()
+		return sess, nil
+	}
+	p.mu.Unlock()
+
+	ad := p.adapter
+	if ad == nil {
+		var ok bool
+		ad, ok = m.adapters[p.Kind]
+		if !ok {
+			return core.Session{}, fmt.Errorf("unsupported agent kind %q", p.Kind)
+		}
+	}
+	dir := p.dir
+	if dir == "" {
+		dir = p.Cwd
+	}
+	dir = usableDir(dir)
+	if p.Kind == core.AgentHermes {
+		if m.cfg.Hermes.Cwd != "" && isHermesGatewayDir(m.cfg.Hermes.Cwd) {
+			dir = m.cfg.Hermes.Cwd
+		} else if !isHermesGatewayDir(dir) {
+			dir = detectHermesGatewayDir()
+		}
+		if !isHermesGatewayDir(dir) {
+			return core.Session{}, fmt.Errorf("Hermes gateway not found. Select the Hermes repo root containing tui_gateway/entry.py, or set hermes.cwd to that path. Current selection: %s", dir)
+		}
+	}
+	resumeID := p.resumeID
+	if resumeID == "" {
+		resumeID, _ = inferResumeIDs(p.Kind, m.history[id])
+	}
+	if resumeID == "" {
+		return core.Session{}, errors.New("no native resume id available for this session")
+	}
+	cmdName, args, env, err := ad.BuildCommand(core.AgentConfig{SessionName: p.Name, Cwd: dir, PiBinary: m.cfg.Pi.Binary, PiResumeID: resumeID, HermesVenv: m.cfg.Hermes.Venv, HermesModule: m.cfg.Hermes.GatewayModule, HermesCwd: dir})
+	if err != nil {
+		return core.Session{}, err
+	}
+	p.mu.Lock()
+	p.adapter = ad
+	p.cmdName = cmdName
+	p.args = args
+	p.env = env
+	p.dir = dir
+	p.Cwd = dir
+	p.resumeID = resumeID
+	p.stdin = nil
+	p.mu.Unlock()
+	log.Printf("session %s: restarting %s agent", id, p.Kind)
+	if err := m.startAgent(p); err != nil {
+		m.setState(id, core.StateError)
+		m.publish(core.AgentEvent{Event: "error", SessionID: id, Content: err.Error()})
+		m.publish(core.AgentEvent{Event: "state_change", SessionID: id, State: core.StateError})
+		return core.Session{}, err
+	}
+	m.setState(id, core.StateStarting)
+	m.publish(core.AgentEvent{Event: "state_change", SessionID: id, State: core.StateStarting})
+	m.schedulePersist()
+	m.mu.RLock()
+	sess := p.Session
+	m.mu.RUnlock()
+	return sess, nil
+}
+
 func (m *Manager) Kill(id string) error {
 	return m.stopSession(id, true)
 }
