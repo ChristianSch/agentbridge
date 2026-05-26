@@ -8,7 +8,6 @@ const loginHTML = `<!doctype html>
 <body><main class="box"><h1>Unlock AgentBridge</h1><p id="status">Checking authentication…</p><div class="row"><button id="enter" class="primary" style="display:none">Enter AgentBridge</button><button id="login" class="primary">Use Face ID / security key</button><button id="register">Register passkey</button></div><p>Bootstrap token</p><div class="row"><input id="token" placeholder="AGENTBRIDGE_TOKEN"><button id="tokenBtn">Use token</button></div><p class="err" id="err"></p></main>
 <script>
 localStorage.removeItem('agentbridgeToken');
-if (location.search.includes('token=')) history.replaceState(null,'','/login');
 const $=id=>document.getElementById(id);
 function b64uToBuf(s){s=s.replace(/-/g,'+').replace(/_/g,'/'); while(s.length%4)s+='='; return Uint8Array.from(atob(s),c=>c.charCodeAt(0)).buffer}
 function bufToB64u(b){return btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'')}
@@ -25,9 +24,6 @@ $('enter').onclick=()=>{location.href='/'}; $('login').onclick=login; $('registe
 </script></body></html>`
 
 func (s *Server) loginPage(w http.ResponseWriter, r *http.Request) {
-	if s.stripTokenRedirect(w, r) {
-		return
-	}
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
 	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("Expires", "0")
