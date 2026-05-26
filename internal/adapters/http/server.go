@@ -442,7 +442,10 @@ func (s *Server) attachmentByID(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, publicAttachment(att))
 	case http.MethodDelete:
-		_ = s.attachments.Delete(r.Context(), id)
+		if err := s.attachments.Delete(r.Context(), id); err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -492,7 +495,7 @@ func (s *Server) transcribe(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) canUseSession(r *http.Request, id string) bool {
 	if id == "" {
-		return true
+		return false
 	}
 	sess, ok := s.store.Get(id)
 	return ok && visibleToOwner(sess, core.OwnerID(r.Context()))
