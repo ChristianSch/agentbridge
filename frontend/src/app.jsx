@@ -23,7 +23,11 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const ws = useRef(null)
   const subscribed = useRef(new Set())
+  const activeRef = useRef(null)
+  const sessionsRef = useRef([])
   const activeSession = sessions.find(s => s.id === active)
+  useEffect(() => { activeRef.current = active }, [active])
+  useEffect(() => { sessionsRef.current = sessions }, [sessions])
   function selectSession(id) { if (id) localStorage.agentbridgeActiveSession = id; setActive(id); setSidebarOpen(false) }
 
   async function refresh() {
@@ -64,23 +68,69 @@ function App() {
 
   useEffect(() => { refresh().catch(console.error); api('/api/detect').then(setDetectInfo).catch(console.error) }, [])
   useEffect(() => {
-    const url = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`
-    const sock = new WebSocket(url)
-    ws.current = sock
-    sock.onopen = () => { setSocketState('connected'); setSessions(list => { list.forEach(s => subscribe(s.id)); return list }) }
-    sock.onerror = () => setSocketState('error')
-    sock.onclose = () => setSocketState('closed')
-    sock.onmessage = e => { const ev = JSON.parse(e.data); if (!ev.session_id) { if (ev.event === 'error') addMessage(active || sessions[0]?.id, { type: 'system', text: ev.content || 'WebSocket error' }); return } const msg = normalizeEvent(ev); if (msg) addMessage(ev.session_id, msg); if (ev.event === 'state_change') setSessions(list => sortSessions(list.map(s => s.id === ev.session_id ? { ...s, state: ev.state, last_active: new Date().toISOString() } : s))) }
-    return () => sock.close()
+    let stopped = false
+    let retryTimer = null
+    let attempts = 0
+    const connect = () => {
+      if (stopped) return
+      const url = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`
+      const sock = new WebSocket(url)
+      ws.current = sock
+      subscribed.current = new Set()
+      setSocketState(attempts ? `reconnecting ${attempts}` : 'connecting')
+      sock.onopen = () => {
+        attempts = 0
+        setSocketState('connected')
+        refresh().catch(console.error)
+        setSessions(list => { list.forEach(s => subscribe(s.id)); return list })
+      }
+      sock.onerror = () => setSocketState('error')
+      sock.onclose = () => {
+        if (ws.current === sock) ws.current = null
+        subscribed.current = new Set()
+        if (stopped) return
+        attempts += 1
+        setSocketState('closed')
+        refresh().catch(console.error)
+        retryTimer = setTimeout(connect, Math.min(30000, 1000 * 2 ** Math.min(attempts, 5)))
+      }
+      sock.onmessage = e => {
+        const ev = JSON.parse(e.data)
+        if (!ev.session_id) {
+          if (ev.event === 'error') addMessage(activeRef.current || sessionsRef.current[0]?.id, { type: 'system', text: ev.content || 'WebSocket error' })
+          return
+        }
+        const msg = normalizeEvent(ev)
+        if (msg) addMessage(ev.session_id, msg)
+        if (ev.event === 'state_change') setSessions(list => sortSessions(list.map(s => s.id === ev.session_id ? { ...s, state: ev.state, last_active: new Date().toISOString() } : s)))
+      }
+    }
+    connect()
+    return () => { stopped = true; clearTimeout(retryTimer); ws.current?.close() }
   }, [])
-  useEffect(() => { sessions.forEach(s => subscribe(s.id)) }, [sessions.length])
+  useEffect(() => { sessions.forEach(s => subscribe(s.id)) }, [sessions.length, socketState])
+  useEffect(() => {
+    const timer = setInterval(() => refresh().catch(console.error), 30000)
+    const onVisible = () => { if (!document.hidden) refresh().catch(console.error) }
+    window.addEventListener('focus', onVisible)
+    document.addEventListener('visibilitychange', onVisible)
+    return () => { clearInterval(timer); window.removeEventListener('focus', onVisible); document.removeEventListener('visibilitychange', onVisible) }
+  }, [])
 
   async function create(req) {
     const s = await api('/api/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(req) })
     setSessions(prev => sortSessions([s, ...prev])); selectSession(s.id); setFlowKind(null); setTimeout(() => subscribe(s.id), 0)
   }
 
-  function send(action, text = '', extra = {}, sessionId = active) { if (!sessionId || !ws.current) return; ws.current.send(JSON.stringify({ action, session_id: sessionId, text, ...extra })) }
+  function send(action, text = '', extra = {}, sessionId = active) {
+    if (!sessionId) return
+    if (ws.current?.readyState !== WebSocket.OPEN) {
+      addMessage(sessionId, { type: 'system', text: 'Connection lost; reconnecting…' })
+      refresh().catch(console.error)
+      return
+    }
+    ws.current.send(JSON.stringify({ action, session_id: sessionId, text, ...extra }))
+  }
   async function renameSession(id, name) { const s = await api(`/api/sessions/${encodeURIComponent(id)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) }); setSessions(list => sortSessions(list.map(x => x.id === id ? s : x))) }
   async function restartSession(id) { const s = await api(`/api/sessions/${encodeURIComponent(id)}/restart`, { method: 'POST' }); setSessions(list => sortSessions(list.map(x => x.id === id ? s : x))); setTimeout(() => subscribe(id), 0) }
   async function deleteSession(id) { await api(`/api/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' }); subscribed.current.delete(id); setMessages(prev => { const next = { ...prev }; delete next[id]; return next }); const list = sortSessions(await api('/api/sessions')); setSessions(list); setActive(cur => cur === id ? (list.find(s => s.id === localStorage.agentbridgeActiveSession)?.id || list[0]?.id || null) : cur) }
@@ -129,12 +179,13 @@ const bridgeCommands = [
 ]
 
 function AgentChat({ session, messages, onSend, onRestart }) {
-  const [text, setText] = useState(''), [visibleCount, setVisibleCount] = useState(300), [showCommands, setShowCommands] = useState(false), [toolsOpen, setToolsOpen] = useState(false), [attachments, setAttachments] = useState([]), [uploading, setUploading] = useState(false), [recording, setRecording] = useState(false), [voiceError, setVoiceError] = useState(''), [restarting, setRestarting] = useState(false), [restartError, setRestartError] = useState(''), bottom = useRef(null), fileInput = useRef(null), textInput = useRef(null), recorder = useRef(null), chunks = useRef([])
-  useEffect(() => { setText(''); setVisibleCount(300); setShowCommands(false); setToolsOpen(false); setAttachments([]); setVoiceError(''); setRestartError('') }, [session.id])
+  const [text, setText] = useState(''), [visibleCount, setVisibleCount] = useState(300), [showCommands, setShowCommands] = useState(false), [toolsOpen, setToolsOpen] = useState(false), [attachments, setAttachments] = useState([]), [uploading, setUploading] = useState(false), [recording, setRecording] = useState(false), [voiceError, setVoiceError] = useState(''), [restarting, setRestarting] = useState(false), [restartError, setRestartError] = useState(''), [pendingSubmit, setPendingSubmit] = useState(null), bottom = useRef(null), fileInput = useRef(null), textInput = useRef(null), recorder = useRef(null), chunks = useRef([])
+  useEffect(() => { setText(''); setVisibleCount(300); setShowCommands(false); setToolsOpen(false); setAttachments([]); setVoiceError(''); setRestartError(''); setPendingSubmit(null) }, [session.id])
   useEffect(() => { const el = textInput.current; if (!el) return; el.style.height = 'auto'; el.style.height = `${Math.min(el.scrollHeight, Math.round(window.innerHeight * 0.38))}px` }, [text])
   useEffect(() => bottom.current?.scrollIntoView({ block: 'end' }), [messages.length])
   const isBusy = session.state === 'starting' || session.state === 'running'
-  const canSend = session.state !== 'starting' && session.state !== 'running' && session.state !== 'error' && session.state !== 'exited'
+  const isStopped = session.state === 'error' || session.state === 'exited'
+  const canSend = !isBusy && !isStopped
   const grouped = groupMessages(messages)
   const hidden = Math.max(0, grouped.length - visibleCount)
   const visible = hidden ? grouped.slice(hidden) : grouped
@@ -172,9 +223,30 @@ function AgentChat({ session, messages, onSend, onRestart }) {
       rec.start(); setRecording(true)
     } catch (e) { setVoiceError(String(e).trim()) }
   }
+  useEffect(() => {
+    if (!pendingSubmit || !canSend) return
+    onSend(pendingSubmit.action, pendingSubmit.text, pendingSubmit.extra)
+    setPendingSubmit(null)
+    setText('')
+    setAttachments([])
+    setShowCommands(false)
+    setToolsOpen(false)
+  }, [pendingSubmit, canSend])
   async function restart() { setRestarting(true); setRestartError(''); try { await onRestart() } catch (e) { setRestartError(String(e).trim()) } finally { setRestarting(false) } }
-  function submit(e) { e.preventDefault(); if ((!text.trim() && attachments.length === 0) || !canSend) return; const cmd = parseBridgeCommand(text); if (cmd) onSend(cmd.action, cmd.text, { attachment_ids: attachments.map(a => a.id) }); else onSend('prompt', text, { attachment_ids: attachments.map(a => a.id) }); setText(''); setAttachments([]); setShowCommands(false); setToolsOpen(false) }
-  return <><header class="top"><div><strong>{session.name}</strong><span>{session.kind} · {session.state}</span></div><code>{session.id}</code></header>{(session.state === 'exited' || session.state === 'error') && <div class={`restart-banner ${restartError ? 'has-error' : ''}`}><div><strong>{session.state === 'exited' ? 'Session stopped' : 'Session needs a restart'}</strong><span>{restartError ? `Restart failed: ${restartError}` : 'History is preserved. Restart to resume this conversation.'}</span></div><button type="button" class="primary" onClick={restart} disabled={restarting}>{restarting ? 'Restarting…' : 'Restart session'}</button></div>}<section class="messages">{hidden > 0 && <button class="older" onClick={() => setVisibleCount(n => n + 250)}>Show {Math.min(250, hidden)} older items ({hidden} hidden)</button>}{visible.map((m, i) => <Message key={`${hidden}-${i}`} msg={m} onSend={onSend} />)}<div ref={bottom} /></section><form class="composer" onSubmit={submit} onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); uploadFiles(e.dataTransfer.files) }}>{slashOpen && <CommandMenu text={text} onPick={cmd => { setText(cmd.takesText ? `${cmd.name} ` : cmd.name); setShowCommands(false); setToolsOpen(false) }} />}{(attachments.length > 0 || uploading || voiceError) && <div class="attachment-tray">{attachments.map(att => <AttachmentChip key={att.id} att={att} onRemove={() => setAttachments(list => list.filter(x => x.id !== att.id))} />)}{uploading && <span class="attachment-status">processing…</span>}{voiceError && <span class="attachment-error">{voiceError}</span>}</div>}<input ref={fileInput} class="hidden-file" type="file" multiple onChange={e => uploadFiles(e.currentTarget.files)} /><div class={`tool-hud ${toolsOpen ? 'open' : ''}`}><button class="tool-trigger" type="button" title="Tools" aria-expanded={toolsOpen} onClick={() => setToolsOpen(v => !v)}>＋</button>{toolsOpen && <div class="tool-dock"><button class="command-trigger" type="button" title="Commands" onClick={() => { setShowCommands(v => !v); setToolsOpen(false) }}>/</button><button class="attach-trigger" type="button" title="Attach files" onClick={() => { fileInput.current?.click(); setToolsOpen(false) }}>＋</button><button class={`voice-trigger ${recording ? 'recording' : ''}`} type="button" title="Record voice" onClick={() => { toggleRecording(); setToolsOpen(false) }}>{recording ? '■' : '●'}</button></div>}</div><textarea ref={textInput} rows="1" value={text} onInput={e => setText(e.currentTarget.value)} onPaste={e => { const files = [...(e.clipboardData?.files || [])]; if (files.length) uploadFiles(files) }} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); e.currentTarget.form?.requestSubmit() } }} placeholder={`Message ${session.kind}. Drop files, paste images, or record voice.`} /><button class={`send ${isBusy ? 'busy' : ''}`} disabled={!canSend || uploading}>{isBusy ? 'Working' : uploading ? 'Wait' : 'Send'}</button></form></>
+  function submit(e) {
+    e.preventDefault()
+    if (!text.trim() && attachments.length === 0) return
+    const cmd = parseBridgeCommand(text)
+    const payload = cmd ? { action: cmd.action, text: cmd.text, extra: { attachment_ids: attachments.map(a => a.id) } } : { action: 'prompt', text, extra: { attachment_ids: attachments.map(a => a.id) } }
+    if (isStopped) { setPendingSubmit(payload); restart(); return }
+    if (!canSend) return
+    onSend(payload.action, payload.text, payload.extra)
+    setText('')
+    setAttachments([])
+    setShowCommands(false)
+    setToolsOpen(false)
+  }
+  return <><header class="top"><div><strong>{session.name}</strong><span>{session.kind} · {session.state}</span></div><code>{session.id}</code></header>{(session.state === 'exited' || session.state === 'error') && <div class={`restart-banner ${restartError ? 'has-error' : ''}`}><div><strong>{session.state === 'exited' ? 'Session stopped' : 'Session needs a restart'}</strong><span>{restartError ? `Restart failed: ${restartError}` : 'History is preserved. Restart to resume this conversation.'}</span></div><button type="button" class="primary" onClick={restart} disabled={restarting}>{restarting ? 'Restarting…' : 'Restart session'}</button></div>}<section class="messages">{hidden > 0 && <button class="older" onClick={() => setVisibleCount(n => n + 250)}>Show {Math.min(250, hidden)} older items ({hidden} hidden)</button>}{visible.map((m, i) => <Message key={`${hidden}-${i}`} msg={m} onSend={onSend} />)}<div ref={bottom} /></section><form class="composer" onSubmit={submit} onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); uploadFiles(e.dataTransfer.files) }}>{slashOpen && <CommandMenu text={text} onPick={cmd => { setText(cmd.takesText ? `${cmd.name} ` : cmd.name); setShowCommands(false); setToolsOpen(false) }} />}{(attachments.length > 0 || uploading || voiceError) && <div class="attachment-tray">{attachments.map(att => <AttachmentChip key={att.id} att={att} onRemove={() => setAttachments(list => list.filter(x => x.id !== att.id))} />)}{uploading && <span class="attachment-status">processing…</span>}{voiceError && <span class="attachment-error">{voiceError}</span>}</div>}<input ref={fileInput} class="hidden-file" type="file" multiple onChange={e => uploadFiles(e.currentTarget.files)} /><div class={`tool-hud ${toolsOpen ? 'open' : ''}`}><button class="tool-trigger" type="button" title="Tools" aria-expanded={toolsOpen} onClick={() => setToolsOpen(v => !v)}>＋</button>{toolsOpen && <div class="tool-dock"><button class="command-trigger" type="button" title="Commands" onClick={() => { setShowCommands(v => !v); setToolsOpen(false) }}>/</button><button class="attach-trigger" type="button" title="Attach files" onClick={() => { fileInput.current?.click(); setToolsOpen(false) }}>＋</button><button class={`voice-trigger ${recording ? 'recording' : ''}`} type="button" title="Record voice" onClick={() => { toggleRecording(); setToolsOpen(false) }}>{recording ? '■' : '●'}</button></div>}</div><textarea ref={textInput} rows="1" value={text} onInput={e => setText(e.currentTarget.value)} onPaste={e => { const files = [...(e.clipboardData?.files || [])]; if (files.length) uploadFiles(files) }} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); e.currentTarget.form?.requestSubmit() } }} placeholder={`Message ${session.kind}. Drop files, paste images, or record voice.`} /><button class={`send ${isBusy || pendingSubmit ? 'busy' : ''}`} disabled={isBusy || uploading || restarting || !!pendingSubmit}>{pendingSubmit ? 'Reviving' : isBusy ? 'Working' : uploading ? 'Wait' : isStopped ? 'Revive & send' : 'Send'}</button></form></>
 }
 function AttachmentChip({ att, onRemove }) { return <span class="attachment-chip">{att.preview && <img src={att.preview} alt="" />}<span>{att.file_name || att.id}</span><small>{att.mime_type}</small>{onRemove && <button type="button" onClick={onRemove}>×</button>}</span> }
 function CommandMenu({ text, onPick }) { const q = text.startsWith('/') ? text.split(/\s+/)[0].toLowerCase() : ''; const items = bridgeCommands.filter(c => !q || c.name.startsWith(q)); return <div class="command-menu"><div class="command-help">Bridge commands. Unknown slash commands are sent through to the agent.</div>{items.map(cmd => <button type="button" onClick={() => onPick(cmd)}><span>{cmd.name}</span><small>{cmd.hint}</small></button>)}</div> }
