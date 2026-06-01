@@ -34,10 +34,11 @@ type Manager struct {
 	subs     map[string]map[chan core.AgentEvent]struct{}
 	history  map[string][]core.AgentEvent
 
-	persistPath  string
-	persistMu    sync.Mutex
-	persistTimer *time.Timer
-	activity     *activityNarrator
+	persistPath     string
+	persistMu       sync.Mutex
+	persistTimer    *time.Timer
+	persistBackedUp bool
+	activity        *activityNarrator
 }
 
 type sessionRuntime struct {
@@ -182,14 +183,17 @@ func (m *Manager) CreateAgent(ctx context.Context, kind core.AgentKind, name, cw
 	}
 	now := time.Now()
 	p := &sessionRuntime{Session: core.Session{ID: id, Kind: kind, Name: name, Cwd: dir, State: core.StateStarting, CreatedAt: now, LastActive: now, OwnerID: core.OwnerID(ctx)}, adapter: ad, cmdName: cmdName, args: args, env: env, dir: dir, resumeID: resumeID, lastUse: now, attachmentManifestPath: attachmentManifestPath(id), attachmentIndex: map[string]core.Attachment{}}
-	log.Printf("session %s: starting %s agent name=%q cwd=%q cmd=%q args=%q", id, kind, name, cwd, cmdName, args)
-	if err := m.startAgent(p); err != nil {
-		log.Printf("session %s: start failed: %v", id, err)
-		return nil, err
-	}
 	m.mu.Lock()
 	m.sessions[id] = p
 	m.mu.Unlock()
+	log.Printf("session %s: starting %s agent name=%q cwd=%q cmd=%q args=%q", id, kind, name, cwd, cmdName, args)
+	if err := m.startAgent(p); err != nil {
+		m.mu.Lock()
+		delete(m.sessions, id)
+		m.mu.Unlock()
+		log.Printf("session %s: start failed: %v", id, err)
+		return nil, err
+	}
 	m.publish(core.AgentEvent{Event: "state_change", SessionID: id, State: core.StateStarting})
 	return &p.Session, nil
 }
@@ -1135,8 +1139,10 @@ func (m *Manager) addHistoryNotice(sessionID, content string) {
 		return
 	}
 	h := m.history[sessionID]
-	if len(h) > 0 && h[len(h)-1].Event == "history_source" && h[len(h)-1].Content == content {
-		return
+	for _, ev := range h {
+		if ev.Event == "history_source" && ev.Content == content {
+			return
+		}
 	}
 	m.history[sessionID] = append(h, core.AgentEvent{Event: "history_source", SessionID: sessionID, Content: content})
 }
@@ -1289,16 +1295,12 @@ func (m *Manager) restorePersisted() {
 		if p.dir == "" {
 			p.dir = sess.Cwd
 		}
-		if persistedState == core.StateExited {
-			p.State = core.StateExited
-			m.sessions[sess.ID] = p
-			continue
-		}
-		p.State = core.StateStarting
 		switch sess.Kind {
 		case core.AgentTerminal:
 			p.State = core.StateExited
+			m.mu.Lock()
 			m.sessions[sess.ID] = p
+			m.mu.Unlock()
 			m.addHistoryNotice(sess.ID, "Terminal sessions are use-once and are not restarted after AgentBridge restarts.")
 			log.Printf("session %s: terminal restored as exited history; terminals are use-once", sess.ID)
 			continue
@@ -1306,15 +1308,31 @@ func (m *Manager) restorePersisted() {
 			ad, ok := m.adapters[sess.Kind]
 			if !ok {
 				p.State = core.StateError
-				break
+				m.mu.Lock()
+				m.sessions[sess.ID] = p
+				m.mu.Unlock()
+				continue
 			}
 			p.adapter = ad
+			if persistedState == core.StateError {
+				p.State = core.StateError
+				m.mu.Lock()
+				m.sessions[sess.ID] = p
+				m.mu.Unlock()
+				m.addHistoryNotice(sess.ID, "Native session could not be resumed; restored AgentBridge history read-only.")
+				log.Printf("session %s: persisted error restored as read-only history", sess.ID)
+				continue
+			}
 			if p.resumeID == "" {
 				p.State = core.StateExited
+				m.mu.Lock()
 				m.sessions[sess.ID] = p
+				m.mu.Unlock()
+				m.addHistoryNotice(sess.ID, "Native session could not be resumed; restored AgentBridge history read-only.")
 				log.Printf("session %s: no native resume id available; restored as read-only history", sess.ID)
 				continue
 			}
+			p.State = core.StateStarting
 			if sess.Kind == core.AgentHermes && !isHermesGatewayDir(p.dir) {
 				p.dir = detectHermesGatewayDir()
 			}
@@ -1324,9 +1342,15 @@ func (m *Manager) restorePersisted() {
 			if err != nil {
 				log.Printf("session %s: restore command failed: %v", sess.ID, err)
 				p.State = core.StateError
-				break
+				m.mu.Lock()
+				m.sessions[sess.ID] = p
+				m.mu.Unlock()
+				continue
 			}
 			p.cmdName, p.args, p.env = cmdName, args, env
+			m.mu.Lock()
+			m.sessions[sess.ID] = p
+			m.mu.Unlock()
 			if err := m.startAgent(p); err != nil {
 				log.Printf("session %s: restore agent failed: %v", sess.ID, err)
 				p.State = core.StateError
@@ -1334,7 +1358,6 @@ func (m *Manager) restorePersisted() {
 		default:
 			continue
 		}
-		m.sessions[sess.ID] = p
 	}
 	if len(st.Sessions) > 0 {
 		log.Printf("session persistence: restored %d session(s) from %s", len(m.sessions), m.persistPath)
@@ -1400,7 +1423,12 @@ func (m *Manager) persistNow() {
 		log.Printf("session persistence: write failed: %v", err)
 		return
 	}
-	backupPersistedState(m.persistPath)
+	m.persistMu.Lock()
+	if !m.persistBackedUp {
+		backupPersistedState(m.persistPath)
+		m.persistBackedUp = true
+	}
+	m.persistMu.Unlock()
 	if err := os.Rename(tmp, m.persistPath); err != nil {
 		log.Printf("session persistence: rename failed: %v", err)
 	}
