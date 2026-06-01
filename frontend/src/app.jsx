@@ -232,7 +232,7 @@ function AgentChat({ session, messages, onSend, onRestart }) {
     setShowCommands(false)
     setToolsOpen(false)
   }, [pendingSubmit, canSend])
-  async function restart() { setRestarting(true); setRestartError(''); try { await onRestart() } catch (e) { setRestartError(String(e).trim()) } finally { setRestarting(false) } }
+  async function restart() { setRestarting(true); setRestartError(''); try { await onRestart() } catch (e) { setRestartError(String(e).trim()); setPendingSubmit(null) } finally { setRestarting(false) } }
   function submit(e) {
     e.preventDefault()
     if (!text.trim() && attachments.length === 0) return

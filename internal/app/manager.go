@@ -829,8 +829,10 @@ func (m *Manager) readLoop(p *sessionRuntime, r io.Reader) {
 			continue
 		}
 		ev.SessionID = p.ID
-		if p.Kind == core.AgentHermes && ev.Event == "error" && strings.Contains(strings.ToLower(ev.Content), "session not found") {
-			m.markReadOnly(p, "Hermes session was not found; keeping AgentBridge history read-only.")
+		if p.Kind == core.AgentHermes && ev.Event == "error" {
+			if hermesResumeErrorIsReadOnly(ev.Content) {
+				m.markReadOnly(p, "Hermes session could not be resumed; keeping AgentBridge history read-only. "+ev.Content)
+			}
 		}
 		if ev.Event == "state_change" {
 			log.Printf("session %s event state=%s", p.ID, ev.State)
@@ -849,6 +851,14 @@ func (m *Manager) readLoop(p *sessionRuntime, r io.Reader) {
 	if err := s.Err(); err != nil {
 		m.publish(core.AgentEvent{Event: "error", SessionID: p.ID, Content: err.Error()})
 	}
+}
+
+func hermesResumeErrorIsReadOnly(content string) bool {
+	msg := strings.ToLower(content)
+	return strings.Contains(msg, "session not found") ||
+		strings.Contains(msg, "missing access_token") ||
+		strings.Contains(msg, "auth is missing") ||
+		strings.Contains(msg, "re-authenticate")
 }
 
 func (m *Manager) markReadOnly(p *sessionRuntime, reason string) {
