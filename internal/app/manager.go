@@ -923,8 +923,11 @@ func (m *Manager) captureHermesRemoteID(p *sessionRuntime, line []byte) {
 			log.Printf("session %s: hermes resumed persistent session_key=%s", p.ID, resumed)
 		}
 		if messages, ok := msg.Result["messages"].([]any); ok && len(messages) > 0 {
-			m.replaceHistory(p.ID, hermesMessagesToEvents(p.ID, messages), fmt.Sprintf("Restored %d messages from Hermes native history", len(messages)))
-			log.Printf("session %s: restored %d Hermes history message(s)", p.ID, len(messages))
+			if m.restoreHermesNativeHistory(p.ID, hermesMessagesToEvents(p.ID, messages), fmt.Sprintf("Restored %d messages from Hermes native history", len(messages))) {
+				log.Printf("session %s: restored %d Hermes history message(s)", p.ID, len(messages))
+			} else {
+				log.Printf("session %s: keeping existing AgentBridge history instead of replacing it with %d Hermes message(s)", p.ID, len(messages))
+			}
 		}
 		if needSessionKey {
 			m.queryHermesSessionKey(p, sid)
@@ -1106,6 +1109,29 @@ func (m *Manager) publish(ev core.AgentEvent) {
 	if subCount == 0 && m.shouldNotify(ev) {
 		go m.notify(ev)
 	}
+}
+
+func (m *Manager) restoreHermesNativeHistory(sessionID string, events []core.AgentEvent, source string) bool {
+	m.mu.RLock()
+	existing := append([]core.AgentEvent(nil), m.history[sessionID]...)
+	m.mu.RUnlock()
+	if hasConversationHistory(existing) {
+		return false
+	}
+	m.replaceHistory(sessionID, events, source)
+	return true
+}
+
+func hasConversationHistory(events []core.AgentEvent) bool {
+	for _, ev := range events {
+		switch ev.Event {
+		case "", "history_source", "state_change", "stderr", "error", "activity_summary":
+			continue
+		default:
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Manager) replaceHistory(sessionID string, events []core.AgentEvent, source string) {

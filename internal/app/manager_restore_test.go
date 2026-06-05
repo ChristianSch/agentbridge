@@ -88,6 +88,46 @@ func TestRestoreAgentWithResumeIDFastExitNotStuckStarting(t *testing.T) {
 	t.Fatalf("state remained %q", sess.State)
 }
 
+func TestHermesNativeHistoryDoesNotReplaceExistingConversation(t *testing.T) {
+	m := managerWithState(t, persistedState{History: map[string][]core.AgentEvent{
+		"hermes-1": {
+			{Event: "history_source", SessionID: "hermes-1", Content: "Loaded from cache"},
+			{Event: "user_message", SessionID: "hermes-1", Content: "cached prompt"},
+			{Event: "delta", SessionID: "hermes-1", Content: "cached response"},
+		},
+	}})
+
+	ok := m.restoreHermesNativeHistory("hermes-1", []core.AgentEvent{{Event: "user_message", SessionID: "hermes-1", Content: "native prompt"}}, "Restored 1 messages from Hermes native history")
+
+	if ok {
+		t.Fatal("restoreHermesNativeHistory replaced existing conversation history")
+	}
+	if got := len(m.history["hermes-1"]); got != 3 {
+		t.Fatalf("history len = %d, want 3", got)
+	}
+	if got := m.history["hermes-1"][1].Content; got != "cached prompt" {
+		t.Fatalf("history was replaced, got %q", got)
+	}
+}
+
+func TestHermesNativeHistoryRestoresWhenOnlyNoticesExist(t *testing.T) {
+	m := managerWithState(t, persistedState{History: map[string][]core.AgentEvent{
+		"hermes-2": {{Event: "history_source", SessionID: "hermes-2", Content: "Loaded from cache"}, {Event: "state_change", SessionID: "hermes-2", State: core.StateStarting}},
+	}})
+
+	ok := m.restoreHermesNativeHistory("hermes-2", []core.AgentEvent{{Event: "user_message", SessionID: "hermes-2", Content: "native prompt"}}, "Restored 1 messages from Hermes native history")
+
+	if !ok {
+		t.Fatal("restoreHermesNativeHistory did not restore empty conversation history")
+	}
+	if got := len(m.history["hermes-2"]); got != 2 {
+		t.Fatalf("history len = %d, want 2", got)
+	}
+	if got := m.history["hermes-2"][1].Content; got != "native prompt" {
+		t.Fatalf("native history not restored, got %q", got)
+	}
+}
+
 func TestPersistBacksUpOncePerManager(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("AGENTBRIDGE_STATE_DIR", dir)
